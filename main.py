@@ -6,7 +6,6 @@ def init_kegg_genome(recalc=False):
     if not recalc:
         genes = set(genes) - kegg_genes_in_dataset()
     genes = list(genes)
-    print(len(genes))
     def objects_creator(*gene_ids):
         kegg = KeggApi()
         genes_dict = kegg.genes_info(list(gene_ids))
@@ -22,3 +21,14 @@ def init_kegg_genome(recalc=False):
 
 if __name__ == '__main__':
     init_kegg_genome()
+    #  get all KEGG pathways and modules
+    """
+    kegg = KeggApi()
+    pathways = kegg.get_all_pathways()
+    modules = kegg.get_all_modules()
+    """
+    #  example get all variants in a pathway
+    """
+    pathway_obj = KeggNetwork('hsa01200', 'pathway')
+    KeggNetwork.all_snvs(outpath='test.csv')
+    """

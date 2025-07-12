@@ -59,19 +59,16 @@ class KeggNetwork:
         tasks = [{gene} for gene in self.genes]
         target = lambda gene: gene.all_snvs()
         collector = []
-        #callback_ = lambda array, data: array.append(data)
         def callback_(array, data):
-            print(f"called! {len(array)}")
+            #print(f"called! {len(array)}")
             array.append(data)
         callback = partial(callback_, collector)
         multiprocess_task(tasks=tasks, target=target, callback=callback)
-        print(len(collector))
         all_snvs = pd.concat(collector)
         if not outpath:
             outpath = pjoin(KEGG_PATHWAY_MUTATIONS_PATH, f"{self.id}.csv")
         all_snvs.to_csv(outpath, index=index)
         return all_snvs
-
 
 
 class KeggGene:
