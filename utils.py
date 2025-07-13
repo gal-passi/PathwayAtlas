@@ -3,6 +3,7 @@ import warnings
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
+import numpy as np
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from multiprocessing import cpu_count
@@ -10,6 +11,9 @@ from multiprocessing.pool import ThreadPool as Pool
 import copy
 import re
 import glob
+from esm import pretrained
+import torch
+
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
@@ -468,5 +472,63 @@ class KeggApi:
         return {kegg_id: gene_data}
 
 
+class ESMEmbedding:
+    """
+    ESM embedding protein into mutation probabilities matrix
 
+    Usage example:
+        embedder = ESMEmbedding()
+        sequences = [("seq1", "MKTFFVLLLCTFTVVSLDLG")]
+        results, tokens = embedder.embed_sequences(sequences)
+        probs = embedder.mutation_probabilities(results, tokens)
+    """
+    def __init__(self, model_name='esm1b_t33_650M_UR50S'):
+        """
+        :param model_name: str esm model name
+        """
+        self.model, self.alphabet = pretrained.load_model_and_alphabet(model_name)
+        self.batch_converter = self.alphabet.get_batch_converter()
+        self.model.eval()  # set to eval mode
+
+        # Precompute index map for standard amino acids
+        aa_order = "ACDEFGHIKLMNPQRSTVWY"
+        tok_to_idx = self.alphabet.tok_to_idx
+        self.aa_indices = [tok_to_idx[aa] for aa in aa_order]
+        self.aa_order = aa_order
+
+    def embed_sequences(self, sequences: list[tuple[str, str]], transformers=33):
+        """
+        :param sequences: list of tuples (sequence_id, sequence)
+        :param transformers: Transformer layer to extract logits from
+        :return: ESM model results for the sequences
+        """
+        batch_labels, batch_strs, batch_tokens = self.batch_converter(sequences)
+        with torch.no_grad():
+            results = self.model(batch_tokens, repr_layers=[transformers], return_contacts=False)
+        return results, batch_tokens
+
+    def mutation_probabilities(self, results, batch_tokens):
+        """
+        :param results: ESM model results
+        :param batch_tokens: tokenized input sequences
+        :return: mutation probabilities matrix [L, 20] for each sequence in the batch
+        """
+        logits = results['logits']      # shape: (b, t, v)
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        # remove BOS/EOS tokens
+        seq_probs = []
+        for i in range(batch_tokens.size(0)):
+            seq_len = (batch_tokens[i] != self.alphabet.padding_idx).sum().item() - 2  # exclude BOS and EOS
+            aa_probs = probs[i, 1:seq_len+1, :]  # [L, V]
+            aa_probs = aa_probs[:, self.aa_indices]  # [L, 20]
+            seq_probs.append(aa_probs.cpu().numpy())
+
+        return seq_probs
+
+    def get_aa_order(self):
+        """
+        :return: String of amino acid order used for probability matrix columns
+        """
+        return self.aa_order
 
