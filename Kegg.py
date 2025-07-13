@@ -143,7 +143,7 @@ class KeggGene:
                 for alt_na in NA_CHANGE[ref_na]:
                     alt_codon = mutate_codon(codon, idx, alt_na)
                     alt_aa = CODON_TRANSLATOR[alt_codon]
-                    if (alt_codon in STOP_CODONS) or (alt_aa == ref_aa):  # ignore nonsense and synonym variants
+                    if  alt_aa == ref_aa:  # ignore nonsense and synonym variants
                         continue
                     df.loc[len(df)] = row_data(index, ref_na, alt_na, ref_aa, alt_aa)
         if outpath:
