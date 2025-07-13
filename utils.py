@@ -3,6 +3,7 @@ import warnings
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
+import numpy as np
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from multiprocessing import cpu_count
@@ -10,9 +11,9 @@ from multiprocessing.pool import ThreadPool as Pool
 import copy
 import re
 import glob
-import torch
-import numpy as np
 from esm import pretrained
+import torch
+
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
@@ -471,7 +472,6 @@ class KeggApi:
         return {kegg_id: gene_data}
 
 
-
 class ESMEmbedding:
     """
     ESM embedding protein into mutation probabilities matrix
@@ -531,6 +531,4 @@ class ESMEmbedding:
         :return: String of amino acid order used for probability matrix columns
         """
         return self.aa_order
-
-
 
