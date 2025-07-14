@@ -101,6 +101,7 @@ def kegg_genes_in_dataset():
 
 class CbioApi:
     """api for cbio portal"""
+    # cbio is portal for cancer genomics data
 
     def __init__(self, ):
         """Constructor for Cbio"""
@@ -530,6 +531,8 @@ class ESMEmbedding:
             aa_probs = probs[i, 1:seq_len+1, :]  # [L, V]
             aa_probs = aa_probs[:, self.aa_indices]  # [L, 20]
             seq_probs.append(aa_probs.cpu().numpy())
+
+        # need normalization again?
 
         return seq_probs
 
