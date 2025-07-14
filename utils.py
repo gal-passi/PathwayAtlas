@@ -459,7 +459,9 @@ class KeggApi:
                 except IndexError:
                     gene_data['chr'] = values[1]
             if title.startswith('UniProt'):
-                gene_data['uniprot_id'] = values[1]
+                ids = values[1:]
+                gene_data['uniprot_id'] = { 'primary': ids[0] if ids else None,
+                                            'secondary': set(ids[1:]) if len(ids) > 1 else set()  }
             if title == 'AASEQ':
                 aa_seq_flag = True
                 aa_seq_len = int(values[1])

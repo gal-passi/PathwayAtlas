@@ -41,20 +41,14 @@ if __name__ == '__main__':
     # Step 3: Generate SNV CSVs for each pathway
     for pathway_id in pathways:
         print(f"Processing pathway: {pathway_id}")
-        try:
-            network = KeggNetwork(pathway_id, 'pathway')
-            network.all_snvs()  # will save to default path
-        except Exception as e:
-            print(f"Failed to process pathway {pathway_id}: {e}")
+        network = KeggNetwork(pathway_id, 'pathway')
+        network.all_snvs()  # will save to default path
     """
 
     """
     # Step 4: Generate SNV CSVs for each module
     for module_id in modules:
         print(f"Processing module: {module_id}")
-        try:
-            network = KeggNetwork(module_id, 'module')
-            network.all_snvs()  # will save to default path
-        except Exception as e:
-            print(f"Failed to process module {module_id}: {e}")
+        network = KeggNetwork(module_id, 'module')
+        network.all_snvs()  # will save to default path
     """

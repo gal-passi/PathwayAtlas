@@ -91,7 +91,7 @@ class KeggGene:
 
     def _create_new_instance(self, kegg_id):
         kegg_api = KeggApi()
-        self.uniprot_id = kegg_api.convert_gene_names(kegg_id)  # list
+        self.uniprot_id = kegg_api.convert_gene_names(kegg_id)  # dict
         self.aa_seq = kegg_api.gene_seq(kegg_id, 'aaseq')[kegg_id]
         self.na_seq = kegg_api.gene_seq(kegg_id, 'ntseq')[kegg_id]
         save_obj(self, self._directory)
