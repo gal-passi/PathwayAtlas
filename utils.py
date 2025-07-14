@@ -3,7 +3,6 @@ import warnings
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
-import numpy as np
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from multiprocessing import cpu_count
@@ -418,11 +417,16 @@ class KeggApi:
 
     @staticmethod
     def _process_single_gene(data):
+        # define default gene data
         gene_data = copy.deepcopy(GENE_DATA)
         kegg_id = None
         aa_seq_flag, na_seq_flag = False, False
         aa_seq_len, na_seq_len = None, None
-        for row in data.split('\n')[:-1]:
+
+        # process each row in the gene data
+        for row in data.split('\n'):
+            if not row.strip():
+                continue
             values = row.split()
             # while flags are True len(values) must be 1
             if len(values) > 1:
@@ -436,9 +440,10 @@ class KeggApi:
                 continue
             try:
                 title = values[0]
-            except IndexError:  # happens in rare cases
-                print('title exception' + kegg_id)
+            except IndexError:  # happens in rare cases [empty lines, corrupted data...]
+                print(f"[KEGG PARSE ERROR] Malformed line in gene block: {row}")
                 continue
+            # process each title
             if title == 'ENTRY':
                 kegg_id = f'hsa:{values[1]}'
                 gene_data['coding_type'] = values[2]
@@ -462,7 +467,7 @@ class KeggApi:
                 na_seq_flag = True
                 na_seq_len = int(values[1])
                 continue
-
+        # check if all required fields are present
         if gene_data['aa_seq']:
             assert len(gene_data['aa_seq']) == aa_seq_len, 'aa_seq length does not match ' + kegg_id
         if gene_data['na_seq']:
@@ -481,6 +486,8 @@ class ESMEmbedding:
         sequences = [("seq1", "MKTFFVLLLCTFTVVSLDLG")]
         results, tokens = embedder.embed_sequences(sequences)
         probs = embedder.mutation_probabilities(results, tokens)
+
+    Note: class tested on google colab, and worked fine
     """
     def __init__(self, model_name='esm1b_t33_650M_UR50S'):
         """
