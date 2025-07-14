@@ -3,7 +3,6 @@ import warnings
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
-import numpy as np
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from multiprocessing import cpu_count
@@ -487,6 +486,8 @@ class ESMEmbedding:
         sequences = [("seq1", "MKTFFVLLLCTFTVVSLDLG")]
         results, tokens = embedder.embed_sequences(sequences)
         probs = embedder.mutation_probabilities(results, tokens)
+
+    Note: class tested on google colab, and worked fine
     """
     def __init__(self, model_name='esm1b_t33_650M_UR50S'):
         """
