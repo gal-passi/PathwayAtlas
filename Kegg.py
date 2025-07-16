@@ -1,10 +1,9 @@
 import pandas as pd
-from utils import KeggApi, multiprocess_task
+from utils import KeggApi
 from definitions import *
 from os.path import join as pjoin
-from utils import save_obj, load_obj, read_in_chunks
+from utils import save_obj, load_obj
 import os
-from functools import partial
 from tqdm import tqdm
 
 def gene_snvs_wrapper(gene):
@@ -16,72 +15,59 @@ def create_kegg_gene(gene_id_set):
 
 
 class KeggNetwork:
-    """Object to represent Kegg Modules or Pathways"""
+    """Object to represent KEGG Modules or Pathways using precomputed gene SNV files."""
 
     def __init__(self, kegg_id, network_type):
-        """Constructor for KeggPathway"""
-        self.id, self.type, self.gene_list, self._len = None, None, None, {'aa': 0, 'na': 0}
-        self._directory = pjoin(KEGG_PATHWAY_OBJECTS_PATH, kegg_id + '.pickle')
-        if os.path.exists(self._directory):
-            load_obj(self, self._directory, name=kegg_id)
-        else:
-            self._create_new_instance(kegg_id, network_type)
+        self.id, self.type = kegg_id, network_type.lower()
+        self._dict_path = pjoin(KEGG_PATHWAY_OBJECTS_PATH, f"{self.id}.pickle")
+
+        assert self.type in NETWORK_TYPES, NETWORK_TYPE_ERROR
+
+        if not os.path.exists(self._dict_path):
+            raise FileNotFoundError(f"Missing gene SNV mapping for pathway/module: {self.id}")
+
+        self.gene_snv_map: dict = pd.read_pickle(self._dict_path)  # {kegg_id: path_to_snv_csv}
+        self.gene_list = list(self.gene_snv_map.keys())
 
     def __len__(self):
-        return self._len['na']
-
-    def _create_new_instance(self, kegg_id, network_type):
-        assert network_type.lower() in NETWORK_TYPES, NETWORK_TYPE_ERROR
-        kegg_api = KeggApi()
-        self.id, self.type = kegg_id, network_type.lower()
-        self.gene_list = kegg_api.get_gene_list(kegg_id)
-        gene_objects = []
-
-        def _callback(collector, kegg_gene):
-            collector.append(kegg_gene)
-
-        callback = partial(_callback, gene_objects)
-        tasks = [(gene_id, ) for gene_id in self.gene_list]  # tasks must be iterable of iterables
-        #  too many workers may overload Kegg servers
-        multiprocess_task(tasks=tasks, target=create_kegg_gene, callback=callback, workers=6)
-        for gene in gene_objects:
-            self._len['aa'] += gene.length('aa')
-            self._len['na'] += gene.length('na')
-        save_obj(self, self._directory)
+        return len(self.gene_list)
 
     @property
     def genes(self):
-        """
-        iterator for pathway gene objects
-        :return: iteratoe KeggGene
-        """
-        for gene in self.gene_list:
-            yield KeggGene(gene)
+        """Yield KeggGene instances for all genes in the network."""
+        for gene_id in self.gene_list:
+            yield KeggGene(gene_id)
 
     def all_snvs(self, outpath='', index=True):
         """
-        creates a DataFrame of all single nucleotide variants in the path
-        :param index: bool include index in DataFrame
-        :param outpath: if not given will be saved to default path at KEGG_PATHWAY_MUTATIONS_PATH
-        :return: pandas DataFrame
+        Load precomputed SNVs for all genes in the pathway.
+        :param index: bool, include index in final CSV
+        :param outpath: optional output CSV path (defaults to KEGG_PATHWAY_MUTATIONS_PATH/<id>.csv)
+        :return: DataFrame of concatenated SNVs
         """
-        genes = list(self.genes)  # convert generator to list so we know the length
         collector = []
-        for gene in tqdm(genes, desc=f"Generating SNVs for {self.id}", unit="gene", total=len(genes)):
-            snv_df = gene.all_snvs()
-            if not snv_df.empty:
-                collector.append(snv_df)
+        for gene_id in tqdm(self.gene_list, desc=f"Reading SNVs for {self.id}", unit="gene"):
+            snv_file = self.gene_snv_map.get(gene_id)
+            if snv_file and os.path.exists(snv_file):
+                try:
+                    df = pd.read_csv(snv_file)
+                    if not df.empty:
+                        collector.append(df)
+                except Exception as e:
+                    print(f"[Error] Reading {snv_file}: {e}")
+            else:
+                print(f"[Warning] SNV file not found for {gene_id}")
 
         if not collector:
-            print(f"No valid SNV data generated for pathway {self.id}")
+            print(f"[Warning] No SNVs found for pathway {self.id}")
             return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
 
         all_snvs = pd.concat(collector, ignore_index=True)
 
         if not outpath:
             outpath = pjoin(KEGG_PATHWAY_MUTATIONS_PATH, f"{self.id}.csv")
-        all_snvs.to_csv(outpath, index=index)
 
+        all_snvs.to_csv(outpath, index=index)
         return all_snvs
 
 
@@ -149,7 +135,7 @@ class KeggGene:
 
         Notes:
             - The last codon (3 nucleotides) is skipped (assumed to be the stop codon).
-            - Any leftover 1 or 2 nucleotides at the end are ignored — only full codons are processed.
+            - If len(self.na_seq) % 3 != 0, we return empty DataFrame.
 
         :param index: bool, include index column in DataFrame if True
         :param outpath: str, if provided, saves the DataFrame as a CSV to this path
@@ -157,7 +143,7 @@ class KeggGene:
         """
         # SKIP if the nucleic acid sequence is not a multiple of 3
         if len(self.na_seq) % 3 != 0:
-            print(f"Gene: {self.uniprot_id} has {self.na_seq} nucleotides, <!%3==0>!")
+            print(f"Gene: {self.kegg_id} has {len(self.na_seq)} nucleotides, <!%3==0>!")
             return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
 
         def read_in_chunks(seq, chunk_size=3):
