@@ -7,6 +7,11 @@ import os
 from functools import partial
 
 
+def create_kegg_gene(gene_id_set):
+    gene_id = next(iter(gene_id_set))  # since each task is a set with one gene_id
+    return KeggGene(gene_id)
+
+
 class KeggNetwork:
     """Object to represent Kegg Modules or Pathways"""
 
@@ -33,9 +38,9 @@ class KeggNetwork:
             collector.append(kegg_gene)
 
         callback = partial(_callback, gene_objects)
-        tasks = [{gene_id} for gene_id in self.gene_list]  # tasks must be iterable of iterables
+        tasks = [(gene_id, ) for gene_id in self.gene_list]  # tasks must be iterable of iterables
         #  too many workers may overload Kegg servers
-        multiprocess_task(tasks=tasks, target=lambda gene_id: KeggGene(gene_id), callback=callback, workers=6)
+        multiprocess_task(tasks=tasks, target=create_kegg_gene, callback=callback, workers=6)
         for gene in gene_objects:
             self._len['aa'] += gene.length('aa')
             self._len['na'] += gene.length('na')
@@ -175,7 +180,7 @@ class KeggGene:
                     if alt_codon not in CODON_TRANSLATOR:
                         continue  # skip invalid mutated codons
                     alt_aa = CODON_TRANSLATOR[alt_codon]
-                    if alt_aa == ref_aa:
+                    if alt_aa == ref_aa or alt_aa == STOP_AA:                       #  IS THE SECOND PART NEEDED?
                         continue  # ignore synonymous and nonsense variants
 
                     df.loc[len(df)] = row_data(index, ref_na, alt_na, ref_aa, alt_aa)

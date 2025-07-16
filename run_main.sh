@@ -3,6 +3,8 @@
 #SBATCH --killable
 #SBATCH --time=03:00:00
 #SBATCH --mem=16G
+#SBATCH --cpus-per-task=8
+#SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 
 

@@ -92,8 +92,11 @@ def multiprocess_task(tasks, target, workers=None, callback=lambda x: x):
     """
     workers = workers if workers else cpu_count()
     with Pool(workers) as p:
-        for status in p.starmap(target, tasks):
-            callback(status)
+        try:
+            for status in p.starmap(target, tasks):
+                callback(status)
+        except Exception as e:
+            print(f"Multiprocessing task failed: {e}")
 
 
 def kegg_genes_in_dataset():
