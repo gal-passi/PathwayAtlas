@@ -5,6 +5,7 @@ from os.path import join as pjoin
 from utils import save_obj, load_obj, read_in_chunks
 import os
 from functools import partial
+from tqdm import tqdm
 
 def gene_snvs_wrapper(gene):
     return gene.all_snvs()
@@ -64,21 +65,23 @@ class KeggNetwork:
         :param outpath: if not given will be saved to default path at KEGG_PATHWAY_MUTATIONS_PATH
         :return: pandas DataFrame
         """
-
-        tasks = [{gene} for gene in self.genes]
-        target = gene_snvs_wrapper
+        genes = list(self.genes)  # convert generator to list so we know the length
         collector = []
+        for gene in tqdm(genes, desc=f"Generating SNVs for {self.id}", unit="gene", total=len(genes)):
+            snv_df = gene.all_snvs()
+            if not snv_df.empty:
+                collector.append(snv_df)
 
-        def callback_(array, data):
-            #print(f"called! {len(array)}")
-            array.append(data)
+        if not collector:
+            print(f"No valid SNV data generated for pathway {self.id}")
+            return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
 
-        callback = partial(callback_, collector)
-        multiprocess_task(tasks=tasks, target=target, callback=callback)
-        all_snvs = pd.concat(collector)
+        all_snvs = pd.concat(collector, ignore_index=True)
+
         if not outpath:
             outpath = pjoin(KEGG_PATHWAY_MUTATIONS_PATH, f"{self.id}.csv")
         all_snvs.to_csv(outpath, index=index)
+
         return all_snvs
 
 
@@ -152,6 +155,10 @@ class KeggGene:
         :param outpath: str, if provided, saves the DataFrame as a CSV to this path
         :return: pandas DataFrame with SNV data
         """
+        # SKIP if the nucleic acid sequence is not a multiple of 3
+        if len(self.na_seq) % 3 != 0:
+            print(f"Gene: {self.uniprot_id} has {self.na_seq} nucleotides, <!%3==0>!")
+            return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
 
         def read_in_chunks(seq, chunk_size=3):
             """Yield only full codons (3 bases)."""
@@ -182,7 +189,7 @@ class KeggGene:
                     if alt_codon not in CODON_TRANSLATOR:
                         continue  # skip invalid mutated codons
                     alt_aa = CODON_TRANSLATOR[alt_codon]
-                    if alt_aa == ref_aa or alt_aa == STOP_AA:                       #  IS THE SECOND PART NEEDED?
+                    if alt_aa == ref_aa:            # we include stop codon mutation in the meanwhile
                         continue  # ignore synonymous and nonsense variants
 
                     df.loc[len(df)] = row_data(index, ref_na, alt_na, ref_aa, alt_aa)

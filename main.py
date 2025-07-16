@@ -22,13 +22,20 @@ def init_kegg_genome(recalc=False):
 
 
 if __name__ == '__main__':
+    """
     # Step 1: Initialize KEGG genome (download all genes)
+    print("Downloading/Loading KEGG genome...")
     init_kegg_genome()
+    """
 
     # Step 2: Get all pathways and modules
+    print("Initializing KEGG genome...")
     kegg = KeggApi()
     pathways = kegg.get_all_pathways()
     modules = kegg.get_all_modules()
+
+    print(f"Number of pathways: {len(pathways)}")
+    print(f"Number of modules: {len(modules)}")
 
     # Step 3: Generate SNV CSVs for each pathway
     for pathway_id in pathways:
