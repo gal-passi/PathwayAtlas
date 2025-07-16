@@ -21,34 +21,25 @@ def init_kegg_genome(recalc=False):
 
 
 if __name__ == '__main__':
+    """
     # Step 1: Initialize KEGG genome (download all genes)
     init_kegg_genome()
-
     """
+
     # Step 2: Get all pathways and modules
     kegg = KeggApi()
     pathways = kegg.get_all_pathways()
     modules = kegg.get_all_modules()
-    """
 
-    #  example get all variants in a pathway
-    """
-    pathway_obj = KeggNetwork('hsa01200', 'pathway')
-    KeggNetwork.all_snvs(outpath='test.csv')
-    """
-
-    """
     # Step 3: Generate SNV CSVs for each pathway
     for pathway_id in pathways:
         print(f"Processing pathway: {pathway_id}")
         network = KeggNetwork(pathway_id, 'pathway')
         network.all_snvs()  # will save to default path
-    """
 
-    """
     # Step 4: Generate SNV CSVs for each module
     for module_id in modules:
         print(f"Processing module: {module_id}")
         network = KeggNetwork(module_id, 'module')
         network.all_snvs()  # will save to default path
-    """
+
