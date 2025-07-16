@@ -1,3 +1,4 @@
+import time
 from utils import *
 from Kegg import *
 
@@ -21,10 +22,8 @@ def init_kegg_genome(recalc=False):
 
 
 if __name__ == '__main__':
-    """
     # Step 1: Initialize KEGG genome (download all genes)
     init_kegg_genome()
-    """
 
     # Step 2: Get all pathways and modules
     kegg = KeggApi()
@@ -34,8 +33,10 @@ if __name__ == '__main__':
     # Step 3: Generate SNV CSVs for each pathway
     for pathway_id in pathways:
         print(f"Processing pathway: {pathway_id}")
+        start = time.time()
         network = KeggNetwork(pathway_id, 'pathway')
         network.all_snvs()  # will save to default path
+        print(f"Finished processing {pathway_id} in {time.time() - start:.2f} seconds")
 
     # Step 4: Generate SNV CSVs for each module
     for module_id in modules:

@@ -6,6 +6,8 @@ from utils import save_obj, load_obj, read_in_chunks
 import os
 from functools import partial
 
+def gene_snvs_wrapper(gene):
+    return gene.all_snvs()
 
 def create_kegg_gene(gene_id_set):
     gene_id = next(iter(gene_id_set))  # since each task is a set with one gene_id
@@ -64,7 +66,7 @@ class KeggNetwork:
         """
 
         tasks = [{gene} for gene in self.genes]
-        target = lambda gene: gene.all_snvs()
+        target = gene_snvs_wrapper
         collector = []
 
         def callback_(array, data):
