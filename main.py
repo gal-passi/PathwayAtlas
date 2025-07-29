@@ -20,9 +20,14 @@ def init_kegg_genome(recalc=False):
     multiprocess_task(tasks=tasks, target=target, workers=KEG_API_RECOMMENDED_WORKERS)
 
 
-def genes_all_snvs():
+def genes_all_snvs(recalc=False):
     kegg = KeggApi()
     all_genes = list(kegg.get_all_genes().keys())
+    if not recalc:
+        all_genes = set(all_genes) - kegg_genes_in_dataset()
+    all_genes = list(all_genes)
+    print(f"Total genes to process: {len(all_genes)}")
+
     for gene_id in tqdm(all_genes, desc="Generating gene SNVs", unit="gene"):
         try:
             gene = KeggGene(gene_id)
@@ -47,7 +52,10 @@ def pathways_and_modules_dict():
                     if os.path.exists(snv_file):
                         gene_map[gene_id] = snv_file
                     else:
-                        print(f"[Missing] SNV file not found for gene: {gene_id}")
+                        print(f"[Missing] SNV file not found for gene: {gene_id} in p/m: {kegg_id}")
+                        # If SNV file is not found, we still want to keep the gene in the map
+                        # The main reason of not having SNV file is that the len(gene)%3!=0
+                        gene_map[gene_id] = None
 
                 out_file = os.path.join(KEGG_PATHWAY_OBJECTS_PATH, f"{kegg_id}.pickle")
                 pd.to_pickle(gene_map, out_file)
@@ -65,16 +73,22 @@ def pathways_and_modules_dict():
 
 
 if __name__ == '__main__':
+    # Lab Notebook:
+    #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
+
     """
     # Step 1: Initialize KEGG genome (download all genes)
     print("Downloading/Loading KEGG genome...")
     init_kegg_genome()
     """
 
+    """
     # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
     print("Creating all SNVs in all genes...")
     genes_all_snvs()
+    """
 
     # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
     print("Mapping genes snvs to pathways and modules...")
     pathways_and_modules_dict()
+    # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
