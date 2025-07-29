@@ -539,7 +539,7 @@ class WildtypeMarginalsCalculator:
         log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
         return log_probs, offset
 
-    def score_all_mutations(self, sequence: str) -> dict:
+    def score_all_mutations(self, sequence: str) -> torch.Tensor:
         """
         Scores all single amino acid substitutions for a given sequence
         using a vectorized approach after obtaining logits from the model.
@@ -550,7 +550,7 @@ class WildtypeMarginalsCalculator:
             sequence: WT amino acid sequence (string)
 
         Returns:
-            dict: mutation scores { "A42V": score, ... }
+            log_probs: Tensor of shape [seq_len, 20].
         """
         # --- Part 1: Sequence and Logits Acquisition (from original score_all_mutations) ---
         offset = 0
@@ -589,7 +589,7 @@ class WildtypeMarginalsCalculator:
 
         if len(valid_positions) == 0:
             print("INFO: No valid amino acids found in the sequence for scoring.")
-            return {}
+            return torch.empty(0, 20, device=self.device)  # Return empty tensor if no valid positions
 
         # For valid positions only
         wt_indices_valid = wt_indices[valid_positions]  # shape [valid_len]
@@ -605,41 +605,27 @@ class WildtypeMarginalsCalculator:
         # This is `log-softmax(...)` from the formula
         log_probs = log_softmax(delta_logits, dim=1)  # shape [valid_len, 20]
 
-        scores = {}
-        for pos_idx, seq_pos_in_logits_tensor in enumerate(valid_positions.tolist()):
-            # Use original sequence for WT AA mapping
-            wt_aa = sequence[seq_pos_in_logits_tensor]
-            wt_idx = wt_indices_valid[pos_idx].item()
+        return log_probs
 
-            for mut_idx in range(num_aa):
-                if mut_idx == wt_idx:
-                    continue # Skip self-mutations [should not happen in main pipeline, but good for safety]
-
-                mut_aa = INDEX_TO_AA_ESM.get(mut_idx)
-
-                # position in human indexing (1-based), account for offset if any was applied
-                variant_key = f"{wt_aa}{seq_pos_in_logits_tensor + 1 + offset}{mut_aa}"
-                scores[variant_key] = log_probs[pos_idx, mut_idx].item()
-
-        return scores
-
-    def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
+    def save_mutation_scores_to_csv(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
         Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
         The scores are added to a new column named 'score'.
 
         Args:
             sequence: The wild-type amino acid sequence.
-            csv_path: Path to the existing input CSV file with variant information.
+            input_csv_path: Path to the existing input CSV file with variant information.
+            output_csv_path: Path to the CSV file where scores will be saved.
         """
         # Compute scores for the given sequence
-        mutation_scores = self.score_all_mutations(sequence)
+        # TODO calc scores for long sequences (more than ESM_MAX_LENGTH)
+        score_matrix = self.score_all_mutations(sequence)
 
         # Load the existing CSV file
         try:
-            df = pd.read_csv(csv_path)
+            df = pd.read_csv(input_csv_path)
         except FileNotFoundError:
-            print(f"Error: Input CSV file not found at {csv_path}")
+            print(f"Error: Input CSV file not found at {input_csv_path}")
             return
         except Exception as e:
             print(f"Error reading CSV file: {e}")
@@ -649,13 +635,24 @@ class WildtypeMarginalsCalculator:
         df['score'] = float('nan')
 
         # Iterate through the DataFrame and add scores
-        for index, row in df.iterrows():
-            variant_key = row['Variant']
-            if variant_key in mutation_scores:
-                df.at[index, 'score'] = mutation_scores[variant_key]
-            else:
-                print(f"Warning: Score for variant {variant_key} not found in computed scores. Setting to NaN.")
+        for idx, row in df.iterrows():
+            try:
+                na_index = int(row['Start'])  # Nucleotide index
+                aa_pos = na_index // 3  # Convert to codon index
+
+                variant = str(row['Variant'])  # e.g., M0L, M2R...
+                mut_aa = variant[-1]  # Extract mutant amino acid
+
+                if mut_aa == STOP_AA:   # stop codon, so score is -inf...
+                    continue
+
+                mut_idx = AA_TO_INDEX_ESM.get(mut_aa)
+                if mut_idx is None or aa_pos >= score_matrix.shape[0]:    # if more sequence positions than scores calculated
+                    continue
+
+                df.at[idx, 'score'] = score_matrix[aa_pos, mut_idx].item()
+            except Exception as e:
+                print(f"[Warning] Could not assign score for row {idx}: {e}")
 
         # Save the updated DataFrame to a new CSV file
-        df.to_csv(csv_path, index=False)
-        print(f"Mutation scores saved to {csv_path}")
+        df.to_csv(output_csv_path, index=False)
