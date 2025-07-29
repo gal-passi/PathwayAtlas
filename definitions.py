@@ -23,9 +23,12 @@ KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')
 KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')
 KEGG_PATHWAY_OBJECTS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'objects')
 KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')
+SCORING_MUTATIONS_PATH = pjoin(DB, 'scoring_mutations')
+
 
 DIRS_TO_CREATE = [DB, CBIO_PATH, KEGG_PATH, STUDIES_PATH, KEGG_GENES_PATH, KEGG_PATHWAYS_PATH,
                   KEGG_PATHWAY_OBJECTS_PATH,KEGG_PATHWAY_MUTATIONS_PATH]
+
 
 #   REQUESTS AND OS CONSTANTS
 
@@ -36,6 +39,7 @@ RETRY_STATUS_LIST = [429, 500, 502, 503, 504, 403, 400]
 DEFAULT_HEADER = "https://"
 WORKERS = None  # use default amount of CPUs
 KEG_API_RECOMMENDED_WORKERS = 6
+
 
 #  BIOLOGIC CONSTANTS
 
@@ -62,6 +66,7 @@ CODON_TRANSLATOR = {'ata': 'I', 'atc': 'I', 'att': 'I', 'atg': 'M', 'aca': 'T',
 
 FAMANALYSIS_COLUMNS = ['Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant']
 
+
 #   CBIOPORTAL
 
 CBIO_API_URL = 'https://www.cbioportal.org/api/v2/api-docs'
@@ -72,7 +77,9 @@ STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'S
 # exclude only on patient key and protein change to avoid problems with hg19/hg18
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
 
+
 #  KEGG
+
 KEGG_HSA_PATHWAYS_DIR = pjoin(KEGG_PATH, 'kegg_hsa_pathways.pickle')  # {pathway_id : desc}
 
 KEGG_API_URL = 'https://rest.kegg.jp'
@@ -97,6 +104,20 @@ GENE_DATA = {'kegg_id': None, 'uniprot_id': None, 'aa_seq': '', 'na_seq': '',
              'chr': None, 'start': None, 'end': None, 'coding_type': None, 'ref_names': None}
 
 KEG_POSITION_RE = "(\d+)\.{2}(\d+)"
+
+
+#  ESM
+
+REP_LAYERS = [33]   # "number of transformers"
+ESM1B_MODEL = 'esm1b_t33_650M_UR50S'
+AA_TO_INDEX_ESM = {'K': 0, 'R': 1, 'H': 2, 'E': 3, 'D': 4, 'N': 5, 'Q': 6, 'T': 7, 'S': 8, 'C': 9, 'G': 10,
+                   'A': 11, 'V': 12, 'L': 13, 'I': 14, 'M': 15, 'P': 16, 'Y': 17, 'F': 18, 'W': 19}
+
+VALID_AA = "ACDEFGHIKLMNPQRSTVWY"
+ESM_AA_ORDER = 'LAGVSERTIDPKQNFYMHWC'
+ESM_MAX_LENGTH = 1020
+
+
 
 #  ERRORS
 
