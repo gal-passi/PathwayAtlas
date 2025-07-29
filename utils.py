@@ -10,7 +10,7 @@ from multiprocessing.pool import ThreadPool as Pool
 import copy
 import re
 import glob
-import torch.nn.functional as tnf
+from torch.nn.functional import log_softmax
 import torch
 from typing import Dict
 import csv
@@ -512,34 +512,12 @@ class WildtypeMarginalsCalculator:
         with torch.no_grad():
             out = self.model(
                 batch_tokens,
-                repr_layers=REP_LAYERS,
+                repr_layers=[33],
                 return_contacts=False,
             )
             logits = out['logits']
-            # remove [CLS] and [EOS] tokens
-            if ESM1B_MODEL == 'esm1_t6_43M_UR50S':
-                aa_logits = logits[0, 1:, 4:24]
-            else:
-                aa_logits = logits[0, 1:-1, 4:24]  # [seq_len, 20]
+            aa_logits = logits[0, 1:-1, 4:24]  # [seq_len, 20] tensor
         return aa_logits
-
-    @staticmethod
-    def esm_process_long_sequences(seq, loc):
-        """
-        trims seq to len < 1024 using mut Object. to fit for bert model
-        :return: offset from orig location, trimmed sequence
-        """
-        thr = ESM_MAX_LENGTH // 2
-        left_bound = 0 if loc - thr < 0 else loc - thr
-        right_bound = len(seq) if loc + thr > len(seq) else loc + thr
-        left_excess = 0 if loc - thr > 0 else abs(loc - thr)
-        right_excess = 0 if loc + thr <= len(seq) else loc + thr - len(seq)
-        if (left_excess == 0) and (right_excess == 0):
-            return left_bound, seq[left_bound:right_bound]
-        if left_excess > 0:
-            return 0, seq[left_bound:right_bound + left_excess]
-        if right_excess > 0:
-            return left_bound - right_excess, seq[left_bound - right_excess:right_bound]
 
     def compute_log_marginals(self, sequence: str, mut_idx: int = None, name='WT'):
         """
@@ -553,151 +531,131 @@ class WildtypeMarginalsCalculator:
         offset = 0
         if len(sequence) > ESM_MAX_LENGTH:
             assert mut_idx is not None, "Mutation index required for long sequence processing."
-            offset, sequence = self.esm_process_long_sequences(sequence, mut_idx)
+            offset = max(0, mut_idx - 511)
+            sequence = sequence[offset:offset + 1022]
 
         batch_tokens = self._get_batch_tokens(sequence, name)
         logits = self._get_logits(batch_tokens)
-        log_probs = tnf.log_softmax(logits, dim=-1)
+        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
         return log_probs, offset
 
-    @staticmethod
-    def score_mutation(log_probs: torch.Tensor, aa_mut, offset: int = 0) -> float:
+    def score_all_mutations(self, sequence: str) -> dict:
         """
-        Compute mutation score from log-marginals (log p(mut) - log p(wt)).
+        Scores all single amino acid substitutions for a given sequence
+        using a vectorized approach after obtaining logits from the model.
+
+        log P(mut) - log P(wt) = log-softmax(logits - wt_logit)
 
         Args:
-            log_probs: Tensor [seq_len, 20]
-            aa_mut: Mutation object
-            offset: offset applied if sequence was sliced
+            sequence: WT amino acid sequence (string)
 
         Returns:
-            float: mutation log-ratio score
+            dict: mutation scores { "A42V": score, ... }
         """
-        idx = aa_mut.mut_idx - offset
-        wt_idx = AA_TO_INDEX_ESM[aa_mut.wt_aa]
-        mut_idx = AA_TO_INDEX_ESM[aa_mut.change_aa]
-        return (log_probs[idx, mut_idx] - log_probs[idx, wt_idx]).item()
+        # --- Part 1: Sequence and Logits Acquisition (from original score_all_mutations) ---
+        offset = 0
+        if len(sequence) > ESM_MAX_LENGTH:
+            # TODO: Handle long sequences properly (e.g., chunking, sliding window)
+            # For now, we'll just process up to ESM_MAX_LENGTH if sequence is longer,
+            # or handle it based on actual model input limits if no chunking implemented.
+            print(f"WARNING: Sequence length ({len(sequence)}) exceeds ESM_MAX_LENGTH ({ESM_MAX_LENGTH}). "
+                  "Processing only the initial part or as handled by _get_logits.")
+            # Adjust sequence to fit model input if necessary
+            sequence = sequence[:ESM_MAX_LENGTH]
 
-    @staticmethod
-    def score_all_mutations(log_probs: torch.Tensor, wt_sequence: str, offset: int = 0) -> Dict[str, float]:
-        """
-        Score all possible single mutations at all positions in the sequence using vectorized operations.
 
-        Args:
-            log_probs: Tensor of shape [seq_len, 20], log-marginals from WT
-            wt_sequence: Full WT sequence (untruncated)
-            offset: Offset from slicing, if applicable
+        batch_tokens = self._get_batch_tokens(sequence, 'WT')
+        # Ensure that the sequence length used for logits matches what was tokenized
+        # In a real model, batch_tokens might produce logits shorter than sequence
+        # if special tokens are added or removed.
+        logits = self._get_logits(batch_tokens)  # raw logits [seq_len, 20]
 
-        Returns:
-            Dict[str, float]: Mutation scores in format { "R29L": score, ... }
-        """
-        seq_len = log_probs.size(0)
-        device = log_probs.device
-        mutation_scores = {}
+        # Ensure that the sequence length from logits matches for the WT index gathering
+        effective_sequence = sequence[:logits.shape[0]]
+        seq_len, num_aa = logits.shape
 
-        # Map WT AAs in current window to indices
-        wt_aas = [wt_sequence[i + offset] for i in range(seq_len)]
-        valid_mask = torch.tensor([aa in AA_TO_INDEX_ESM for aa in wt_aas], dtype=torch.bool, device=device)
+        # --- Part 2: Vectorized Scoring ---
+
+        # Map effective sequence to WT indices tensor
         wt_indices = torch.tensor(
-            [AA_TO_INDEX_ESM[aa] if aa in AA_TO_INDEX_ESM else -1 for aa in wt_aas],
+            [AA_TO_INDEX_ESM.get(aa, -1) for aa in effective_sequence],
             dtype=torch.long,
-            device=device
+            device=self.device
         )
 
-        # Prepare tensor for all mutant AA indices
-        all_mutant_aas = [aa for aa in VALID_AA]
-        all_mutant_indices = torch.tensor(
-            [AA_TO_INDEX_ESM[aa] for aa in all_mutant_aas],
-            dtype=torch.long,
-            device=device
-        )  # [20]
+        # Filter out invalid AAs (-1). These are positions with unknown AAs in the WT sequence.
+        valid_mask = wt_indices >= 0
+        valid_positions = valid_mask.nonzero(as_tuple=True)[0]
 
-        for i in range(seq_len):
-            if not valid_mask[i]:
-                continue
-            wt_aa = wt_aas[i]
-            wt_idx = wt_indices[i].item()
-            wt_log_probs = log_probs[i]  # shape: [20]
+        if len(valid_positions) == 0:
+            print("INFO: No valid amino acids found in the sequence for scoring.")
+            return {}
 
-            # Compute delta = log p(mut_aa) - log p(wt_aa)
-            delta = log_probs[i][all_mutant_indices] - wt_log_probs[wt_idx]  # [20]
+        # For valid positions only
+        wt_indices_valid = wt_indices[valid_positions]  # shape [valid_len]
 
-            for j, mut_aa in enumerate(all_mutant_aas):
-                if mut_aa == wt_aa:
-                    continue  # skip WT->WT
-                mutation_scores[f"{wt_aa}{i + offset + 1}{mut_aa}"] = delta[j].item()
+        # Gather WT logits: shape [valid_len]
+        wt_logits = logits[valid_positions, wt_indices_valid]
 
-        return mutation_scores
+        # Subtract WT logits (broadcast): shape [valid_len, 20]
+        # This is `logits - wt_logit` from the formula
+        delta_logits = logits[valid_positions] - wt_logits.unsqueeze(1)
 
-    @staticmethod
-    def save_mutation_scores_to_csv(
-            mutation_scores: Dict[str, float],
-            output_path: str,
-            protein_id: str,
-    ):
+        # Apply log_softmax along AA dimension (dim=1)
+        # This is `log-softmax(...)` from the formula
+        log_probs = log_softmax(delta_logits, dim=1)  # shape [valid_len, 20]
+
+        scores = {}
+        for pos_idx, seq_pos_in_logits_tensor in enumerate(valid_positions.tolist()):
+            # Use original sequence for WT AA mapping
+            wt_aa = sequence[seq_pos_in_logits_tensor]
+            wt_idx = wt_indices_valid[pos_idx].item()
+
+            for mut_idx in range(num_aa):
+                if mut_idx == wt_idx:
+                    continue # Skip self-mutations [should not happen in main pipeline, but good for safety]
+
+                mut_aa = INDEX_TO_AA_ESM.get(mut_idx)
+
+                # position in human indexing (1-based), account for offset if any was applied
+                variant_key = f"{wt_aa}{seq_pos_in_logits_tensor + 1 + offset}{mut_aa}"
+                scores[variant_key] = log_probs[pos_idx, mut_idx].item()
+
+        return scores
+
+    def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
         """
-        Save mutation scores to a CSV file in the format:
-        ,Chr,Start,End,Ref,Alt,Protein,Variant
+        Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
+        The scores are added to a new column named 'score'.
 
         Args:
-            mutation_scores: Dictionary like { "M1L": score, ... }
-            output_path: Path to the CSV file
-            protein_id: e.g. 'P29401'
+            sequence: The wild-type amino acid sequence.
+            csv_path: Path to the existing input CSV file with variant information.
         """
-        with open(output_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['', 'Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'])
+        # Compute scores for the given sequence
+        mutation_scores = self.score_all_mutations(sequence)
 
-            for idx, (variant, score) in enumerate(mutation_scores.items()):
-                wt_aa = variant[0]
-                pos = int(variant[1:-1])
-                mut_aa = variant[-1]
-                writer.writerow([
-                    idx,
-                    '-',  # Chr placeholder
-                    pos - 1,  # Start (0-based)
-                    pos - 1,  # End
-                    wt_aa.lower(),  # Ref nucleotide placeholder (dummy)
-                    mut_aa.lower(),  # Alt
-                    protein_id,
-                    variant
-                ])
+        # Load the existing CSV file
+        try:
+            df = pd.read_csv(csv_path)
+        except FileNotFoundError:
+            print(f"Error: Input CSV file not found at {csv_path}")
+            return
+        except Exception as e:
+            print(f"Error reading CSV file: {e}")
+            return
 
-    def save_all_proteins_to_csv(
-            self,
-            protein_sequences: Dict[str, str],
-            output_path: str
-    ):
-        """
-        Compute mutation scores for multiple proteins and save all results to one CSV file.
+        # Initialize a new 'score' column with NaN
+        df['score'] = float('nan')
 
-        Args:
-            protein_sequences: Dict mapping protein IDs to sequences.
-            output_path: Path to save the combined CSV file. [SCORING_MUTATIONS_PATH]
-        """
-        with open(output_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['', 'Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'])
+        # Iterate through the DataFrame and add scores
+        for index, row in df.iterrows():
+            variant_key = row['Variant']
+            if variant_key in mutation_scores:
+                df.at[index, 'score'] = mutation_scores[variant_key]
+            else:
+                print(f"Warning: Score for variant {variant_key} not found in computed scores. Setting to NaN.")
 
-            row_idx = 0
-            for protein_id, sequence in protein_sequences.items():
-                log_probs, offset = self.compute_log_marginals(sequence)
-                mutation_scores = self.score_all_mutations(log_probs, sequence, offset)
-
-                for variant, score in mutation_scores.items():
-                    wt_aa = variant[0]
-                    pos = int(variant[1:-1])
-                    mut_aa = variant[-1]
-                    writer.writerow([
-                        row_idx,
-                        '-',  # Chr placeholder
-                        pos - 1,  # Start (0-based)
-                        pos - 1,  # End
-                        wt_aa.lower(),  # Ref (dummy nucleotide)
-                        mut_aa.lower(),  # Alt (dummy nucleotide)
-                        protein_id,
-                        variant
-                    ])
-                    row_idx += 1
-
-
+        # Save the updated DataFrame to a new CSV file
+        df.to_csv(csv_path, index=False)
+        print(f"Mutation scores saved to {csv_path}")

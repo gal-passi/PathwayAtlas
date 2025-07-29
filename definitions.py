@@ -112,6 +112,7 @@ REP_LAYERS = [33]   # "number of transformers"
 ESM1B_MODEL = 'esm1b_t33_650M_UR50S'
 AA_TO_INDEX_ESM = {'K': 0, 'R': 1, 'H': 2, 'E': 3, 'D': 4, 'N': 5, 'Q': 6, 'T': 7, 'S': 8, 'C': 9, 'G': 10,
                    'A': 11, 'V': 12, 'L': 13, 'I': 14, 'M': 15, 'P': 16, 'Y': 17, 'F': 18, 'W': 19}
+INDEX_TO_AA_ESM = {v: k for k, v in AA_TO_INDEX_ESM.items()}
 
 VALID_AA = "ACDEFGHIKLMNPQRSTVWY"
 ESM_AA_ORDER = 'LAGVSERTIDPKQNFYMHWC'

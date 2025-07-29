@@ -1,6 +1,10 @@
 from utils import *
 from Kegg import *
 
+from esm import pretrained
+
+
+
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
     genes = KeggApi().get_all_genes().keys()
@@ -21,6 +25,7 @@ def init_kegg_genome(recalc=False):
 
 
 def genes_all_snvs(recalc=False):
+    """Generate all SNVs for all KEGG genes and save them to files."""
     kegg = KeggApi()
     all_genes = list(kegg.get_all_genes().keys())
     if not recalc:
@@ -39,6 +44,7 @@ def genes_all_snvs(recalc=False):
 
 
 def pathways_and_modules_dict():
+    """Create a dictionary for each KEGG pathway and module mapping gene IDs to their SNV files."""
     kegg = KeggApi()
 
     def process_collection(collection, network_type):
@@ -71,6 +77,48 @@ def pathways_and_modules_dict():
     process_collection(modules, 'module')
 
 
+def create_llr_scoring():
+    """Create LLR scoring for all KEGG proteins using ESM1b model"""
+    # Load ESM1b model
+    model, alphabet = pretrained.load_model_and_alphabet(ESM1B_MODEL)
+    calculator = WildtypeMarginalsCalculator(model=model, alphabet=alphabet)
+
+    # Get KEGG genes
+    kegg = KeggApi()
+    all_genes = list(kegg.get_all_genes().keys())
+    print(f"Total genes to process: {len(all_genes)}")
+
+    # Get sequences
+    seqs = kegg.gene_seq(all_genes, seq_type="aaseq")  # returns dict {gene_id: sequence}
+
+    output_dir = "llr_scores"
+    os.makedirs(output_dir, exist_ok=True)
+
+    for gene_id in tqdm(seqs, desc="Generating LLR scoring", unit="gene"):
+        seq = seqs[gene_id]
+        if not seq or any(aa not in VALID_AA for aa in seq):
+            print(f"Skipping {gene_id}: invalid or empty sequence")
+            continue
+
+        try:
+            # Compute mutation scores
+            scores = calculator.score_all_mutations(seq)
+            output_path = os.path.join(output_dir, f"{gene_id.replace(':', '_')}_llr.csv")
+
+            # Save scores to CSV
+            with open(output_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Variant", "LLR_score"])
+                for variant, score in scores.items():
+                    writer.writerow([variant, score])
+
+        except Exception as e:
+            print(f"Error processing {gene_id}: {e}")
+
+
+
+
+
 
 if __name__ == '__main__':
     # Lab Notebook:
@@ -92,3 +140,7 @@ if __name__ == '__main__':
     print("Mapping genes snvs to pathways and modules...")
     pathways_and_modules_dict()
     # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
+
+    # Step 4: create LLR scoring for all KEGG proteins using ESM1b model
+    print("Creating LLR scoring for all KEGG proteins...")
+    create_llr_scoring()

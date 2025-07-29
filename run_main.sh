@@ -13,10 +13,11 @@ cd /sci/labs/itamarsi/ophirmil12/dina_temp/PathwayAtlas
 # startup venv
 source ./venv/bin/activate
 
+# install all requirements
+# pip install --no-cache-dir -r requirements.txt
+
 # export esm model path to local venv
 export TORCH_HOME=./venv/torch_cache
-
-# pip install --no-cache-dir -r requirements.txt
 
 # run code (output in slurm .out file)
 python -u main.py
