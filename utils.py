@@ -10,8 +10,10 @@ from multiprocessing.pool import ThreadPool as Pool
 import copy
 import re
 import glob
-from esm import pretrained
+from torch.nn.functional import log_softmax
 import torch
+from typing import Dict
+import csv
 
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
@@ -92,8 +94,11 @@ def multiprocess_task(tasks, target, workers=None, callback=lambda x: x):
     """
     workers = workers if workers else cpu_count()
     with Pool(workers) as p:
-        for status in p.starmap(target, tasks):
-            callback(status)
+        try:
+            for status in p.starmap(target, tasks):
+                callback(status)
+        except Exception as e:
+            print(f"Multiprocessing task failed: {e}")
 
 
 def kegg_genes_in_dataset():
@@ -101,6 +106,7 @@ def kegg_genes_in_dataset():
 
 class CbioApi:
     """api for cbio portal"""
+    # cbio is portal for cancer genomics data
 
     def __init__(self, ):
         """Constructor for Cbio"""
@@ -458,7 +464,9 @@ class KeggApi:
                 except IndexError:
                     gene_data['chr'] = values[1]
             if title.startswith('UniProt'):
-                gene_data['uniprot_id'] = values[1]
+                ids = values[1:]
+                gene_data['uniprot_id'] = { 'primary': ids[0] if ids else None,
+                                            'secondary': set(ids[1:]) if len(ids) > 1 else set()  }
             if title == 'AASEQ':
                 aa_seq_flag = True
                 aa_seq_len = int(values[1])
@@ -477,65 +485,174 @@ class KeggApi:
         return {kegg_id: gene_data}
 
 
-class ESMEmbedding:
-    """
-    ESM embedding protein into mutation probabilities matrix
 
-    Usage example:
-        embedder = ESMEmbedding()
-        sequences = [("seq1", "MKTFFVLLLCTFTVVSLDLG")]
-        results, tokens = embedder.embed_sequences(sequences)
-        probs = embedder.mutation_probabilities(results, tokens)
+class WildtypeMarginalsCalculator:
+    def __init__(self, model, alphabet):
+        """
+        Initialize the calculator with the model and alphabet.
+        """
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model = model.to(self.device)
+        self.alphabet = alphabet
+        self.tokenizer = alphabet.get_batch_converter()
 
-    Note: class tested on google colab, and worked fine
-    """
-    def __init__(self, model_name='esm1b_t33_650M_UR50S'):
+    def _get_batch_tokens(self, sequence: str, name='WT') -> torch.Tensor:
         """
-        :param model_name: str esm model name
+        Tokenizes the input sequence using the ESM tokenizer.
         """
-        self.model, self.alphabet = pretrained.load_model_and_alphabet(model_name)
-        self.batch_converter = self.alphabet.get_batch_converter()
-        self.model.eval()  # set to eval mode
+        batch = [(name, sequence)]
+        _, _, tokens = self.tokenizer(batch)
+        return tokens.to(self.device)
 
-        # Precompute index map for standard amino acids
-        aa_order = "ACDEFGHIKLMNPQRSTVWY"
-        tok_to_idx = self.alphabet.tok_to_idx
-        self.aa_indices = [tok_to_idx[aa] for aa in aa_order]
-        self.aa_order = aa_order
-
-    def embed_sequences(self, sequences: list[tuple[str, str]], transformers=33):
+    def _get_logits(self, batch_tokens: torch.Tensor) -> torch.Tensor:
         """
-        :param sequences: list of tuples (sequence_id, sequence)
-        :param transformers: Transformer layer to extract logits from
-        :return: ESM model results for the sequences
+        Returns raw logits from the model for amino acid predictions.
         """
-        batch_labels, batch_strs, batch_tokens = self.batch_converter(sequences)
+        self.model.eval()
         with torch.no_grad():
-            results = self.model(batch_tokens, repr_layers=[transformers], return_contacts=False)
-        return results, batch_tokens
+            out = self.model(
+                batch_tokens,
+                repr_layers=[33],
+                return_contacts=False,
+            )
+            logits = out['logits']
+            aa_logits = logits[0, 1:-1, 4:24]  # [seq_len, 20] tensor
+        return aa_logits
 
-    def mutation_probabilities(self, results, batch_tokens):
+    def compute_log_marginals(self, sequence: str, mut_idx: int = None, name='WT'):
         """
-        :param results: ESM model results
-        :param batch_tokens: tokenized input sequences
-        :return: mutation probabilities matrix [L, 20] for each sequence in the batch
+        Compute log-softmax over amino acid logits to get log-marginals.
+        Handles long sequences by slicing around mutation index.
+
+        Returns:
+            log_probs: Tensor of shape [seq_len, 20]
+            offset: offset applied to sequence (for long seqs); 0 if no slicing
         """
-        logits = results['logits']      # shape: (b, t, v)
-        probs = torch.nn.functional.softmax(logits, dim=-1)
+        offset = 0
+        if len(sequence) > ESM_MAX_LENGTH:
+            assert mut_idx is not None, "Mutation index required for long sequence processing."
+            offset = max(0, mut_idx - 511)
+            sequence = sequence[offset:offset + 1022]
 
-        # remove BOS/EOS tokens
-        seq_probs = []
-        for i in range(batch_tokens.size(0)):
-            seq_len = (batch_tokens[i] != self.alphabet.padding_idx).sum().item() - 2  # exclude BOS and EOS
-            aa_probs = probs[i, 1:seq_len+1, :]  # [L, V]
-            aa_probs = aa_probs[:, self.aa_indices]  # [L, 20]
-            seq_probs.append(aa_probs.cpu().numpy())
+        batch_tokens = self._get_batch_tokens(sequence, name)
+        logits = self._get_logits(batch_tokens)
+        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+        return log_probs, offset
 
-        return seq_probs
-
-    def get_aa_order(self):
+    def score_all_mutations(self, sequence: str) -> torch.Tensor:
         """
-        :return: String of amino acid order used for probability matrix columns
-        """
-        return self.aa_order
+        Scores all single amino acid substitutions for a given sequence
+        using a vectorized approach after obtaining logits from the model.
 
+        log P(mut) - log P(wt) = log-softmax(logits - wt_logit)
+
+        Args:
+            sequence: WT amino acid sequence (string)
+
+        Returns:
+            log_probs: Tensor of shape [seq_len, 20].
+        """
+        # --- Part 1: Sequence and Logits Acquisition (from original score_all_mutations) ---
+        offset = 0
+        if len(sequence) > ESM_MAX_LENGTH:
+            # TODO: Handle long sequences properly (e.g., chunking, sliding window)
+            # For now, we'll just process up to ESM_MAX_LENGTH if sequence is longer,
+            # or handle it based on actual model input limits if no chunking implemented.
+            print(f"WARNING: Sequence length ({len(sequence)}) exceeds ESM_MAX_LENGTH ({ESM_MAX_LENGTH}). "
+                  "Processing only the initial part or as handled by _get_logits.")
+            # Adjust sequence to fit model input if necessary
+            sequence = sequence[:ESM_MAX_LENGTH]
+
+
+        batch_tokens = self._get_batch_tokens(sequence, 'WT')
+        # Ensure that the sequence length used for logits matches what was tokenized
+        # In a real model, batch_tokens might produce logits shorter than sequence
+        # if special tokens are added or removed.
+        logits = self._get_logits(batch_tokens)  # raw logits [seq_len, 20]
+
+        # Ensure that the sequence length from logits matches for the WT index gathering
+        effective_sequence = sequence[:logits.shape[0]]
+        seq_len, num_aa = logits.shape
+
+        # --- Part 2: Vectorized Scoring ---
+
+        # Map effective sequence to WT indices tensor
+        wt_indices = torch.tensor(
+            [AA_TO_INDEX_ESM.get(aa, -1) for aa in effective_sequence],
+            dtype=torch.long,
+            device=self.device
+        )
+
+        # Filter out invalid AAs (-1). These are positions with unknown AAs in the WT sequence.
+        valid_mask = wt_indices >= 0
+        valid_positions = valid_mask.nonzero(as_tuple=True)[0]
+
+        if len(valid_positions) == 0:
+            print("INFO: No valid amino acids found in the sequence for scoring.")
+            return torch.empty(0, 20, device=self.device)  # Return empty tensor if no valid positions
+
+        # For valid positions only
+        wt_indices_valid = wt_indices[valid_positions]  # shape [valid_len]
+
+        # Gather WT logits: shape [valid_len]
+        wt_logits = logits[valid_positions, wt_indices_valid]
+
+        # Subtract WT logits (broadcast): shape [valid_len, 20]
+        # This is `logits - wt_logit` from the formula
+        delta_logits = logits[valid_positions] - wt_logits.unsqueeze(1)
+
+        # Apply log_softmax along AA dimension (dim=1)
+        # This is `log-softmax(...)` from the formula
+        log_probs = log_softmax(delta_logits, dim=1)  # shape [valid_len, 20]
+
+        return log_probs
+
+    def save_mutation_scores_to_csv(self, sequence: str, input_csv_path: str, output_csv_path: str):
+        """
+        Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
+        The scores are added to a new column named 'score'.
+
+        Args:
+            sequence: The wild-type amino acid sequence.
+            input_csv_path: Path to the existing input CSV file with variant information.
+            output_csv_path: Path to the CSV file where scores will be saved.
+        """
+        # Compute scores for the given sequence
+        # TODO calc scores for long sequences (more than ESM_MAX_LENGTH)
+        score_matrix = self.score_all_mutations(sequence)
+
+        # Load the existing CSV file
+        try:
+            df = pd.read_csv(input_csv_path)
+        except FileNotFoundError:
+            print(f"Error: Input CSV file not found at {input_csv_path}")
+            return
+        except Exception as e:
+            print(f"Error reading CSV file: {e}")
+            return
+
+        # Initialize a new 'score' column with NaN
+        df['score'] = float('nan')
+
+        # Iterate through the DataFrame and add scores
+        for idx, row in df.iterrows():
+            try:
+                na_index = int(row['Start'])  # Nucleotide index
+                aa_pos = na_index // 3  # Convert to codon index
+
+                variant = str(row['Variant'])  # e.g., M0L, M2R...
+                mut_aa = variant[-1]  # Extract mutant amino acid
+
+                if mut_aa == STOP_AA:   # stop codon, so score is -inf...
+                    continue
+
+                mut_idx = AA_TO_INDEX_ESM.get(mut_aa)
+                if mut_idx is None or aa_pos >= score_matrix.shape[0]:    # if more sequence positions than scores calculated
+                    continue
+
+                df.at[idx, 'score'] = score_matrix[aa_pos, mut_idx].item()
+            except Exception as e:
+                print(f"[Warning] Could not assign score for row {idx}: {e}")
+
+        # Save the updated DataFrame to a new CSV file
+        df.to_csv(output_csv_path, index=False)
