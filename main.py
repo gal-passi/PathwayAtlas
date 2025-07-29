@@ -86,7 +86,7 @@ def create_llr_scoring(kegg: KeggApi):
     all_genes = kegg.get_all_genes().keys()
     print(f"Total genes to process: {len(all_genes)}")
 
-    os.makedirs(SCORING_MUTATIONS_PATH, exist_ok=True)
+    os.makedirs(KEGG_PATHWAY_MUTATIONS_PATH, exist_ok=True)
 
     for kegg_id in tqdm(all_genes, desc="Generating LLR scoring", unit="gene"):
         # get sequence for the gene
@@ -100,10 +100,10 @@ def create_llr_scoring(kegg: KeggApi):
 
         try:
             # Compute mutation scores
-            # use same path for in-place scores in existing CSV files
+            # use same path for in-place scores in existing CSV files [note that pathways and modules are already made]
             calculator.save_mutation_scores_to_csv(seq,
                                                    input_csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"),
-                                                   output_csv_path=os.path.join(SCORING_MUTATIONS_PATH, f"{kegg_id}.csv"))
+                                                   output_csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"))
         except Exception as e:
             print(f"Error processing {kegg_id}: {e}")
 
