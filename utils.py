@@ -12,8 +12,6 @@ import re
 import glob
 from torch.nn.functional import log_softmax
 import torch
-from typing import Dict
-import csv
 
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
@@ -171,6 +169,7 @@ class CbioApi:
     def all_studies_by_keyword(self, keyword, outpath=''):
         """
         :param keyword: abbreviated cancer type
+        :param outpath: path to save results
         :return: all studies with samples of cancer_type == keyword
         """
         studies = self.api.Studies.getAllStudiesUsingGET(keyword=keyword).result()
@@ -553,29 +552,17 @@ class WildtypeMarginalsCalculator:
             log_probs: Tensor of shape [seq_len, 20].
         """
         # --- Part 1: Sequence and Logits Acquisition (from original score_all_mutations) ---
-        offset = 0
         if len(sequence) > ESM_MAX_LENGTH:
-            # TODO: Handle long sequences properly (e.g., chunking, sliding window)
-            # For now, we'll just process up to ESM_MAX_LENGTH if sequence is longer,
-            # or handle it based on actual model input limits if no chunking implemented.
-            print(f"WARNING: Sequence length ({len(sequence)}) exceeds ESM_MAX_LENGTH ({ESM_MAX_LENGTH}). "
-                  "Processing only the initial part or as handled by _get_logits.")
-            # Adjust sequence to fit model input if necessary
-            sequence = sequence[:ESM_MAX_LENGTH]
-
-
-        batch_tokens = self._get_batch_tokens(sequence, 'WT')
-        # Ensure that the sequence length used for logits matches what was tokenized
-        # In a real model, batch_tokens might produce logits shorter than sequence
-        # if special tokens are added or removed.
-        logits = self._get_logits(batch_tokens)  # raw logits [seq_len, 20]
+            # using the sliding window
+            logits = self.handle_long_protein(sequence)
+        else:
+            batch_tokens = self._get_batch_tokens(sequence, 'WT')
+            logits = self._get_logits(batch_tokens)  # raw logits [seq_len, 20]
 
         # Ensure that the sequence length from logits matches for the WT index gathering
         effective_sequence = sequence[:logits.shape[0]]
-        seq_len, num_aa = logits.shape
 
         # --- Part 2: Vectorized Scoring ---
-
         # Map effective sequence to WT indices tensor
         wt_indices = torch.tensor(
             [AA_TO_INDEX_ESM.get(aa, -1) for aa in effective_sequence],
@@ -607,7 +594,63 @@ class WildtypeMarginalsCalculator:
 
         return log_probs
 
-    def save_mutation_scores_to_csv(self, sequence: str, input_csv_path: str, output_csv_path: str):
+    def handle_long_protein(self, sequence: str) -> torch.Tensor:
+        """
+        Handles proteins longer than ESM_MAX_LENGTH using a sliding window.
+        Each residue is assigned logits from exactly one window:
+          - First window: from start to (midpoint + half stride)
+          - Middle windows: exactly `stride` residues each
+          - Final window (when it reaches the end): take everything until the end
+        """
+        seq_len = len(sequence)
+        window_size = ESM_MAX_LENGTH
+        stride = SLIDING_WINDOW_STRIDE
+        half_window = window_size // 2
+        half_stride = stride // 2
+
+        logits_full = torch.zeros(seq_len, 20, device=self.device)
+
+        pos = 0
+        window_idx = 0
+
+        for start in range(0, seq_len, stride):
+            end = min(start + window_size, seq_len)
+            subseq = sequence[start:end]  # subsequence for this window
+
+            # Run model on this window
+            batch_tokens = self._get_batch_tokens(subseq, f"WT_window_{window_idx}")
+            window_logits = self._get_logits(batch_tokens)  # [window_len, 20]
+            window_len = window_logits.shape[0]
+
+            if window_idx == 0:
+                # First window: take first half_window + half_stride residues
+                take_len = min(half_window + half_stride, window_len)
+                logits_full[0:take_len] = window_logits[0:take_len]
+                pos = take_len
+
+            elif end == seq_len:
+                # Final window: take remaining residues to the end
+                take_len = seq_len - pos
+                logits_full[pos:] = window_logits[-take_len:]
+                pos = seq_len
+                break
+
+            else:
+                # Middle windows: take central `stride` residues
+                center = window_len // 2
+                half_stride = stride // 2
+                start_idx = max(0, center - half_stride)
+                end_idx = min(window_len, center + half_stride)
+                take_len = end_idx - start_idx
+
+                logits_full[pos:pos + take_len] = window_logits[start_idx:end_idx]
+                pos += take_len
+
+            window_idx += 1
+
+        return logits_full
+
+    def save_mutation_scores_to_csv_full(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
         Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
         The scores are added to a new column named 'score'.
@@ -618,18 +661,15 @@ class WildtypeMarginalsCalculator:
             output_csv_path: Path to the CSV file where scores will be saved.
         """
         # Compute scores for the given sequence
-        # TODO calc scores for long sequences (more than ESM_MAX_LENGTH)
         score_matrix = self.score_all_mutations(sequence)
 
         # Load the existing CSV file
         try:
             df = pd.read_csv(input_csv_path)
         except FileNotFoundError:
-            print(f"Error: Input CSV file not found at {input_csv_path}")
-            return
+            raise f"Error: Input CSV file not found at {input_csv_path}"
         except Exception as e:
-            print(f"Error reading CSV file: {e}")
-            return
+            raise f"Error reading CSV file: {e}"
 
         # Initialize a new 'score' column with NaN
         df['score'] = float('nan')
@@ -644,6 +684,7 @@ class WildtypeMarginalsCalculator:
                 mut_aa = variant[-1]  # Extract mutant amino acid
 
                 if mut_aa == STOP_AA:   # stop codon, so score is -inf...
+                    df.at[idx, 'score'] = None      # placeholder
                     continue
 
                 mut_idx = AA_TO_INDEX_ESM.get(mut_aa)
@@ -652,7 +693,12 @@ class WildtypeMarginalsCalculator:
 
                 df.at[idx, 'score'] = score_matrix[aa_pos, mut_idx].item()
             except Exception as e:
-                print(f"[Warning] Could not assign score for row {idx}: {e}")
+                print(f"[Warning] Could not assign score for row {idx} in {input_csv_path}: {e}")
 
         # Save the updated DataFrame to a new CSV file
         df.to_csv(output_csv_path, index=False)
+
+    def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
+        """In place alias of save_mutation_scores_to_csv_full."""
+        return self.save_mutation_scores_to_csv_full(sequence, csv_path, csv_path)
+

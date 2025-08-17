@@ -1,14 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=main
 #SBATCH --killable
-#SBATCH --time=18:00:00
+#SBATCH --requeue
+#SBATCH --time=48:00:00
 #SBATCH --mem=8G
+#SBATCH --gres=gg:g4:1      # for GPU [g0 or g4...]
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 
 
 # go to PathwayAtlas folder [local git folder - cd .]
-cd /sci/labs/itamarsi/ophirmil12/dina_temp/PathwayAtlas
+cd /cs/labs/dina/ophirmil12/PathwayAtlas/
 
 # startup venv
 source ./venv/bin/activate
