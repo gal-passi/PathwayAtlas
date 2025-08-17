@@ -1,7 +1,7 @@
 from utils import *
 from Kegg import *
 
-from esm import pretrained
+from esm import pretrained      # for model choosing and alphabet
 
 
 
@@ -111,12 +111,12 @@ def create_llr_scoring(kegg: KeggApi):
 if __name__ == '__main__':
     # Lab Notebook:
     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
-    
-    
+
+
     kegg = KeggApi()
 
-
-    # Step 1: Initialize KEGG genome (download all genes)
+    """
+    # Step 1: Initialize KEGG genome (download all genes) [./data/kegg/genes]
     print("Downloading/Loading KEGG genome...")
     init_kegg_genome()
 
@@ -128,7 +128,8 @@ if __name__ == '__main__':
     print("Mapping genes snvs to pathways and modules...")
     pathways_and_modules_dict(kegg)
     # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
+    """
 
-    # Step 4: create LLR scoring for all KEGG proteins using ESM1b model
+    # Step 4: create LLR scoring for all KEGG proteins using ESM1b model (GPU recommended) [./data/kegg/pathways/snvs]
     print("Creating LLR scoring for all KEGG proteins...")
     create_llr_scoring(kegg)

@@ -2,8 +2,9 @@
 #SBATCH --job-name=main
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --mem=8G
+#SBATCH --gres=gg:g4:1      # for GPU [g0 or g4...]
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 
