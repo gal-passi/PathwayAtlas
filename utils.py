@@ -650,7 +650,7 @@ class WildtypeMarginalsCalculator:
 
         return logits_full
 
-    def save_mutation_scores_to_csv(self, sequence: str, input_csv_path: str, output_csv_path: str):
+    def save_mutation_scores_to_csv_full(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
         Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
         The scores are added to a new column named 'score'.
@@ -667,11 +667,9 @@ class WildtypeMarginalsCalculator:
         try:
             df = pd.read_csv(input_csv_path)
         except FileNotFoundError:
-            print(f"Error: Input CSV file not found at {input_csv_path}")
-            return
+            raise f"Error: Input CSV file not found at {input_csv_path}"
         except Exception as e:
-            print(f"Error reading CSV file: {e}")
-            return
+            raise f"Error reading CSV file: {e}"
 
         # Initialize a new 'score' column with NaN
         df['score'] = float('nan')
@@ -695,7 +693,12 @@ class WildtypeMarginalsCalculator:
 
                 df.at[idx, 'score'] = score_matrix[aa_pos, mut_idx].item()
             except Exception as e:
-                print(f"[Warning] Could not assign score for row {idx}: {e}")
+                print(f"[Warning] Could not assign score for row {idx} in {input_csv_path}: {e}")
 
         # Save the updated DataFrame to a new CSV file
         df.to_csv(output_csv_path, index=False)
+
+    def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
+        """In place alias of save_mutation_scores_to_csv_full."""
+        return self.save_mutation_scores_to_csv_full(sequence, csv_path, csv_path)
+

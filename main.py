@@ -31,7 +31,7 @@ def genes_all_snvs(kegg: KeggApi, recalc=False):
     if not recalc:
         all_genes = set(all_genes) - kegg_genes_in_dataset()
     all_genes = list(all_genes)
-    print(f"Total genes to process: {len(all_genes)}")
+    print(f"Total genes to process SNVs for: {len(all_genes)}")
 
     for gene_id in tqdm(all_genes, desc="Generating gene SNVs", unit="gene"):
         try:
@@ -99,11 +99,8 @@ def create_llr_scoring(kegg: KeggApi):
             continue
 
         try:
-            # Compute mutation scores
-            # use same path for in-place scores in existing CSV files [note that pathways and modules are already made]
-            calculator.save_mutation_scores_to_csv(seq,
-                                                   input_csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"),
-                                                   output_csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"))
+            # Compute mutation scores [note that pathways and modules are already made]
+            calculator.save_mutation_scores_to_csv(seq, csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"))
         except Exception as e:
             print(f"Error processing {kegg_id}: {e}")
 
@@ -114,26 +111,23 @@ def create_llr_scoring(kegg: KeggApi):
 if __name__ == '__main__':
     # Lab Notebook:
     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
+    
+    
     kegg = KeggApi()
 
-    """
+
     # Step 1: Initialize KEGG genome (download all genes)
     print("Downloading/Loading KEGG genome...")
     init_kegg_genome()
-    """
 
-    """
     # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
     print("Creating all SNVs in all genes...")
-    genes_all_snvs(kegg)
-    """
+    genes_all_snvs(kegg, recalc=True)
 
-    """
     # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
     print("Mapping genes snvs to pathways and modules...")
     pathways_and_modules_dict(kegg)
     # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
-    """
 
     # Step 4: create LLR scoring for all KEGG proteins using ESM1b model
     print("Creating LLR scoring for all KEGG proteins...")
