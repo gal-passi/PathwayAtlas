@@ -661,7 +661,6 @@ class WildtypeMarginalsCalculator:
             output_csv_path: Path to the CSV file where scores will be saved.
         """
         # Compute scores for the given sequence
-        # TODO calc scores for long sequences (more than ESM_MAX_LENGTH)  look above todo
         score_matrix = self.score_all_mutations(sequence)
 
         # Load the existing CSV file
@@ -687,6 +686,7 @@ class WildtypeMarginalsCalculator:
                 mut_aa = variant[-1]  # Extract mutant amino acid
 
                 if mut_aa == STOP_AA:   # stop codon, so score is -inf...
+                    df.at[idx, 'score'] = None      # placeholder
                     continue
 
                 mut_idx = AA_TO_INDEX_ESM.get(mut_aa)
