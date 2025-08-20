@@ -1,5 +1,9 @@
 import os
 import warnings
+from typing import Union, List
+
+import numpy as np
+
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
@@ -486,14 +490,21 @@ class KeggApi:
 
 
 class WildtypeMarginalsCalculator:
-    def __init__(self, model, alphabet):
+    def __init__(self, model, alphabet, testing=False):
         """
         Initialize the calculator with the model and alphabet.
+
+        Args:
+            model - the ESM model
+            alphabet - the alphabet, do:
+            model, alphabet = pretrained.load_model_and_alphabet(ESM1B_MODEL)
+            testing - test mode: without using esm or alphabet, only statics
         """
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.model = model.to(self.device)
-        self.alphabet = alphabet
-        self.tokenizer = alphabet.get_batch_converter()
+        if not testing:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.model = model.to(self.device)
+            self.alphabet = alphabet
+            self.tokenizer = alphabet.get_batch_converter()
 
     def _get_batch_tokens(self, sequence: str, name='WT') -> torch.Tensor:
         """
@@ -650,6 +661,75 @@ class WildtypeMarginalsCalculator:
 
         return logits_full
 
+    @staticmethod
+    def extreme_outliers_mad(data: Union[List[float], np.ndarray, pd.Series], threshold: float = 4.25) -> np.ndarray:
+        """
+        NaN-safe MAD outlier detection; returns indices of outliers.
+
+        Args:
+            data (Union[List[float], np.ndarray, pd.Series]): Input data with scores.
+            threshold (float): The modified z-score threshold to identify an outlier.
+
+        Returns:
+            np.ndarray: An array of integer indices for the outlier values.
+        """
+        data_array = np.array(data, dtype=float)
+        median = np.nanmedian(data_array)
+        mad = np.nanmedian(np.abs(data_array - median))
+
+        if mad == 0 or np.isnan(mad):
+            return np.array([], dtype=int)
+
+        modified_z = 0.6745 * (data_array - median) / mad
+        return np.where(np.abs(modified_z) > threshold)[0]
+
+    def normalize_scores(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Applies the specified normalization process to the 'score' column. After
+        normalization, it assigns a score of 1 to any variants that resulted in an
+        empty score (e.g., mutations to a stop codon).
+
+        Args:
+            df (pd.DataFrame): The DataFrame with a 'score' column.
+
+        Returns:
+            pd.DataFrame: DataFrame with an added 'normalized_score' column.
+        """
+        df_processed = df.copy()
+        scores = pd.to_numeric(df_processed['score'], errors='coerce')  # invalid parsing set as NaN
+
+        # 1. Identify and mask outliers from non-NaN scores
+        outlier_indices = self.extreme_outliers_mad(scores.values, threshold=4.25)
+        inlier_mask = ~np.isnan(scores.values)
+        if outlier_indices.size > 0:
+            inlier_mask[outlier_indices] = False
+        inliers = scores[inlier_mask]
+
+        # 2. Perform min-max normalization based on inliers
+        # Handle case where there are no inliers to avoid errors
+        if inliers.empty:
+            # If no valid scores, can't normalize; return NaN or a default value
+            df_processed['normalized_score'] = np.nan
+        else:
+            vmin, vmax = np.nanmin(inliers), np.nanmax(inliers)
+
+            # Avoid division by zero if all inlier values are the same
+            if vmax == vmin:
+                norm = pd.Series(0.5, index=scores.index)  # Assign a neutral score
+            else:
+                norm = (scores - vmin) / (vmax - vmin)
+
+            # 3. Clip outliers to 0 or 1
+            norm = norm.clip(lower=0.0, upper=1.0)
+
+            # 4. Flip scores so 1 is most pathogenic
+            df_processed['normalized_score'] = 1.0 - norm
+
+        # 5. For empty scores (e.g., stop codons), assign the max pathogenicity score of 1.
+        df_processed['normalized_score'] = df_processed['normalized_score'].fillna(1.0)
+
+        return df_processed
+
     def save_mutation_scores_to_csv_full(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
         Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
@@ -695,8 +775,11 @@ class WildtypeMarginalsCalculator:
             except Exception as e:
                 print(f"[Warning] Could not assign score for row {idx} in {input_csv_path}: {e}")
 
+        # Normalize scores by removing outliers and using min-max normalization
+        df_normalized = self.normalize_scores(df)
+
         # Save the updated DataFrame to a new CSV file
-        df.to_csv(output_csv_path, index=False)
+        df_normalized.to_csv(output_csv_path, index=False)
 
     def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
         """In place alias of save_mutation_scores_to_csv_full."""
