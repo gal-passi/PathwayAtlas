@@ -105,30 +105,45 @@ def create_llr_scoring(kegg: KeggApi):
             print(f"Error processing {kegg_id}: {e}")
 
 
+def check_for_duplicates(df):
+    """Check for duplicate mutations in the DataFrame."""
+    if df.empty:
+        return df
 
+    # Define columns to check for duplicates
+    duplicate_columns = ['Chr', 'Start', 'End', "Ref", "Alt", 'Protein', 'RefDNA', 'PatientKey', 'Variant']
+
+    # Check for duplicates
+    duplicates = df[df.duplicated(subset=duplicate_columns, keep=False)]
+
+    if not duplicates.empty:
+        print(f"Found {len(duplicates)} duplicate mutations.")
+        return duplicates
+    else:
+        print("No duplicate mutations found.")
+        return pd.DataFrame()
 
 
 if __name__ == '__main__':
     # Lab Notebook:
     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
 
+    cbio = CbioApi()
+    all_studies = cbio.api.Studies.getAllStudiesUsingGET().result()
+    print(len(all_studies))
+    for study in all_studies:
+        study_id = study.studyId
+        try:
+            # download mutations
+            results = cbio.download_study_mutations(study_id)
 
-    kegg = KeggApi()
+            # define file name for each study
+            outpath = f"{study_id}_mutations.csv"
 
-
-    # Step 1: Initialize KEGG genome (download all genes) [./data/kegg/genes]
-    print("Downloading/Loading KEGG genome...")
-    init_kegg_genome()
-
-    # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
-    print("Creating all SNVs in all genes...")
-    genes_all_snvs(kegg, recalc=True)
-
-    # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
-    print("Mapping genes snvs to pathways and modules...")
-    pathways_and_modules_dict(kegg)
-    # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
-
-    # Step 4: create LLR scoring for all KEGG proteins using ESM1b model (GPU recommended) [./data/kegg/pathways/snvs]
-    print("Creating LLR scoring for all KEGG proteins...")
-    create_llr_scoring(kegg)
+            # save
+            df = cbio.study_to_csv(results, outpath=outpath)
+            # check for duplicates
+            duplicates = check_for_duplicates(df)
+            #print(f"Saved {outpath}")
+        except Exception as e:
+            print(f"Skipping {study_id}: {e}")
