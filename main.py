@@ -124,57 +124,25 @@ def check_for_duplicates(df):
         return pd.DataFrame()
 
 
-import pandas as pd
-
-
-def check_patient_id_overlap(dfs):
-    """
-    Check if the same patientId appears in more than one study.
-
-    :param dfs: dict of {studyId: DataFrame}
-                (each DataFrame must have 'patientId' column)
-    :return: DataFrame of overlaps (patientId and studies where they appear)
-    """
-    # collect patient-study pairs
-    all_patients = []
-    for study, df in dfs.items():
-        patients = df['PatientId'].unique()
-        all_patients.extend([(p, study) for p in patients])
-
-    all_df = pd.DataFrame(all_patients, columns=['PatientId', 'StudyId'])
-
-    # find patientIds that appear in >1 study
-    overlaps = (
-        all_df.groupby('PatientId')['StudyId']
-        .nunique()
-        .reset_index()
-        .query("StudyId > 1")
-    )
-
-    if overlaps.empty:
-        print("✅ No overlapping patientIds across studies")
-        return pd.DataFrame()
-
-    print(f"⚠️ Found {len(overlaps)} patients present in multiple studies")
-
-    # expand to show which studies each patient belongs to
-    details = all_df[all_df['patientId'].isin(overlaps['patientId'])]
-    return details.sort_values(by='patientId')
-
-
 if __name__ == '__main__':
     # Lab Notebook:
     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
 
     cbio = CbioApi()
-    dfs = {}
     all_studies = cbio.api.Studies.getAllStudiesUsingGET().result()
-    for study_id in all_studies:
-        results = cbio.download_study_mutations(study_id)
-        dfs[study_id] = cbio.study_to_csv(results)
+    for study in all_studies:
+        study_id = study.studyId
+        try:
+            # download mutations
+            results = cbio.download_study_mutations(study_id)
 
-    overlaps = check_patient_id_overlap(dfs)
+            # define file name for each study
+            outpath = f"{study_id}_mutations.csv"
 
-    if not overlaps.empty:
-        overlaps.to_csv("patientId_overlaps.csv", index=False)
-        print("Saved details to patientId_overlaps.csv")
+            # save
+            df = cbio.study_to_csv(results, outpath=outpath)
+            # check for duplicates
+            duplicates = check_for_duplicates(df)
+            print(f"Saved {outpath}")
+        except Exception as e:
+            print(f"Skipping {study_id}: {e}")
