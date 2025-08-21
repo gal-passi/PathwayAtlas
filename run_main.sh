@@ -2,8 +2,9 @@
 #SBATCH --job-name=main
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=12:00:00
-#SBATCH --mem=32G
+#SBATCH --time=18:00:00
+#SBATCH --gres=gg:g4:1
+#SBATCH --mem=8G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 

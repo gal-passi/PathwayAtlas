@@ -1,13 +1,16 @@
 from utils import *
 from Kegg import *
 
+import os
+import pandas as pd
+from tqdm import tqdm
+
 from esm import pretrained      # for model choosing and alphabet
 
 
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
-    # TODO maybe create a small dict from kegg_id to sequence, and save in in the data folder, for future use.
     genes = KeggApi().get_all_genes().keys()
     if not recalc:
         genes = set(genes) - kegg_genes_in_dataset()
@@ -76,6 +79,33 @@ def pathways_and_modules_dict(kegg: KeggApi):
     process_collection(modules, 'module')
 
 
+def disordered_aa_prediction(kegg: KeggApi, recalc=False):
+    """
+    Predicts disordered regions for all KEGG genes and ADDS the predictions as columns
+    to the existing SNV files in KEGG_PATHWAY_MUTATIONS_PATH.
+
+    This function caches the cleaned sequences to speed up subsequent runs.
+    If `recalc=True`, it will re-process all genes. Otherwise, it will only process
+    genes whose corresponding SNV file does not yet have a 'disorder_score' column.
+
+    Args:
+        kegg (KeggApi): An instance of the KeggApi class.
+        recalc (bool): If True, re-calculate and overwrite for all genes.
+    """
+    os.makedirs(KEGG_DISORDERED_AA_PATH, exist_ok=True)
+    sequences_pickle_file = os.path.join(KEGG_DISORDERED_AA_PATH, "sequences_to_predict.pkl")
+
+    disorder_predict = DisorderPredict()
+
+    # Step 1: Load or create the dictionary of cleaned sequences [V3].
+    sequences_to_predict = disorder_predict.load_sequences_to_predict(sequences_pickle_file, recalc)
+    if not sequences_to_predict:
+        return
+
+    # Step 2: Predict disorder for the sequences.
+    disorder_predict.predict(sequences_to_predict)
+
+
 def create_llr_scoring(kegg: KeggApi):
     """Create LLR scoring for all KEGG proteins using ESM1b model"""
     # Load ESM1b model
@@ -89,16 +119,15 @@ def create_llr_scoring(kegg: KeggApi):
     os.makedirs(KEGG_PATHWAY_MUTATIONS_PATH, exist_ok=True)
 
     for kegg_id in tqdm(all_genes, desc="Generating LLR scoring", unit="gene"):
-        # get sequence for the gene
-        gene = KeggGene(kegg_id)
-        seq = gene.aa_seq
-
-        if not seq or any(aa not in VALID_AA for aa in seq):
-            # usually because CSV was not created due to gene length not being a multiple of 3
-            print(f"Skipping {kegg_id}: invalid or empty sequence")
-            continue
-
         try:
+            # get sequence for the gene
+            gene = KeggGene(kegg_id)
+            seq = gene.aa_seq
+
+            if not seq or any(aa not in VALID_AA for aa in seq):
+                # usually because CSV was not created due to gene length not being a multiple of 3
+                print(f"Skipping {kegg_id}: invalid or empty sequence")
+                continue
             # Compute mutation scores [note that pathways and modules are already made]
             calculator.save_mutation_scores_to_csv(seq, csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"))
         except Exception as e:
@@ -128,7 +157,12 @@ if __name__ == '__main__':
     print("Mapping genes snvs to pathways and modules...")
     pathways_and_modules_dict(kegg)
     # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
+    
+    # Step 4: for each AA, determine if it`s in disordered region
+    print("Disordered predictions...")
+    disordered_aa_prediction(kegg, recalc=True)
 
-    # Step 4: create LLR scoring for all KEGG proteins using ESM1b model (GPU recommended) [./data/kegg/pathways/snvs]
+    # Step 5: create LLR scoring and disorder scoring for all KEGG proteins
+    # using ESM1b model (GPU recommended) and metapredict [./data/kegg/pathways/snvs]
     print("Creating LLR scoring for all KEGG proteins...")
     create_llr_scoring(kegg)

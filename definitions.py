@@ -16,8 +16,10 @@ def load_dict(path):
 #  DIRECTORIES
 
 DB = 'data'
+CLIN_VAR_PATH = pjoin(DB, 'clinvar.csv')
 CBIO_PATH = pjoin(DB, 'cbio')
 KEGG_PATH = pjoin(DB, 'kegg')
+KEGG_DISORDERED_AA_PATH = pjoin(KEGG_PATH, 'v3_seqs')       # sequences in V3 format for dis/ordered prediction tool
 STUDIES_PATH = pjoin(CBIO_PATH, 'studies')
 KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')
 KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')
@@ -118,6 +120,14 @@ ESM_AA_ORDER = 'LAGVSERTIDPKQNFYMHWC'
 ESM_MAX_LENGTH = 1020
 SLIDING_WINDOW_STRIDE = 300
 assert (ESM_MAX_LENGTH - SLIDING_WINDOW_STRIDE) // 2 >= 300     # each aa has at least 300 at its sides
+
+
+
+#   DIS/ORDERED
+
+DISORDERED_THRESHOLD = 0.7
+
+
 
 
 #  ERRORS
