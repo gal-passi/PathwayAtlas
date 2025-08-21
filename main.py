@@ -105,23 +105,26 @@ def create_llr_scoring(kegg: KeggApi):
             print(f"Error processing {kegg_id}: {e}")
 
 
-def check_for_duplicates(df):
-    """Check for duplicate mutations in the DataFrame."""
-    if df.empty:
-        return df
+def check_for_duplicates(dfs):
+    """Check for duplicate mutations in all the studies.
+        @param dfs: dictionary of study id to df of that study"""
+    all_patients = []
+    for study, df in dfs.items():
+        patients = df['PatientId'].unique()
+        all_patients.extend(patients)
 
-    # Define columns to check for duplicates
-    duplicate_columns = ['Chr', 'Start', 'End', "Ref", "Alt", 'Protein', 'RefDNA', 'PatientKey', 'Variant']
+    all_df = pd.DataFrame(all_patients, columns=['PatientId', 'StudyId'])
 
-    # Check for duplicates
-    duplicates = df[df.duplicated(subset=duplicate_columns, keep=False)]
+    overlaps = (all_df.groupby('PatientId')['StudyId']
+                .nunique()
+                .reset_index()
+                .query("StudyId > 1")
+                )
 
-    if not duplicates.empty:
-        print(f"Found {len(duplicates)} duplicate mutations.")
-        return duplicates
+    if overlaps.empty:
+        print("No overlapping patients found.")
     else:
-        print("No duplicate mutations found.")
-        return pd.DataFrame()
+        print(f"found {len(overlaps)} overlapping patients.")
 
 
 if __name__ == '__main__':
@@ -129,7 +132,9 @@ if __name__ == '__main__':
     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
 
     cbio = CbioApi()
+    dfs = {}
     all_studies = cbio.api.Studies.getAllStudiesUsingGET().result()
+
     for study in all_studies:
         study_id = study.studyId
         try:
@@ -142,7 +147,7 @@ if __name__ == '__main__':
             # save
             df = cbio.study_to_csv(results, outpath=outpath)
             # check for duplicates
-            duplicates = check_for_duplicates(df)
+            dfs[study_id] = df
             print(f"Saved {outpath}")
         except Exception as e:
             print(f"Skipping {study_id}: {e}")
