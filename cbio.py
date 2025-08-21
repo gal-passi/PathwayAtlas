@@ -10,7 +10,7 @@ Run the `get_studies` function to download mutation data for all studies.
 
 def check_for_duplicates(dfs):
     """Check for duplicate mutations in all the studies.
-        @param dfs: dictionary of study id to df of that study
+        @param dfs: dictionary of study id to df of that study, returned by `get_studies()`.
     """
     all_patients = []
     for study, df in dfs.items():
@@ -59,5 +59,4 @@ def get_studies():
         except Exception as e:
             print(f"Skipping {study_id}: {e}")
 
-    check_for_duplicates(dfs)
     return dfs
