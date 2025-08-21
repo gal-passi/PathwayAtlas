@@ -9,13 +9,13 @@
 
 
 # go to PathwayAtlas folder [local git folder - cd .]
-cd /cs/labs/dina/ophirmil12/PathwayAtlas/
+cd /cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/
 
 # startup venv
 source ./venv/bin/activate
 
 # install all requirements
-# pip install --no-cache-dir -r requirements.txt
+#pip install --no-cache-dir -r requirements.txt
 
 # export esm model path to local venv
 export TORCH_HOME=./venv/torch_cache
