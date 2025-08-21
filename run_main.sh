@@ -15,12 +15,12 @@ cd /cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/
 source ./venv/bin/activate
 
 # install all requirements
-pip install --no-cache-dir -r requirements.txt
+#pip install --no-cache-dir -r requirements.txt
 
 # export esm model path to local venv
 export TORCH_HOME=./venv/torch_cache
 
 # run code (output in slurm .out file)
-#python -u main.py
+python -u main.py
 
 ### #SBATCH --gres=gg:g4:1      # for GPU [g0 or g4, g10... we have access to g4 only]

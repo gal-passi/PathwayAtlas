@@ -142,12 +142,16 @@ if __name__ == '__main__':
             results = cbio.download_study_mutations(study_id)
 
             # define file name for each study
-            outpath = f"{study_id}_mutations.csv"
+            outpath = f"data/cbio/studies/{study_id}_mutations.csv"
 
-            # save
-            df = cbio.study_to_csv(results, outpath=outpath)
-            # check for duplicates
-            dfs[study_id] = df
-            print(f"Saved {outpath}")
+            if os.path.exists(outpath):
+                print(f"{study_id} already downloaded.")
+            else:
+                # save
+                df = cbio.study_to_csv(results, outpath=outpath)
+                dfs[study_id] = df
+                print(f"Saved {outpath}")
         except Exception as e:
             print(f"Skipping {study_id}: {e}")
+
+    check_for_duplicates(dfs)
