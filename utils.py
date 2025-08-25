@@ -1,10 +1,12 @@
 import os
 import warnings
-from typing import Union, List
+from typing import Union, List, Dict, Optional
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from tqdm import tqdm
 
+from Kegg import KeggGene
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
@@ -509,40 +511,43 @@ class WildtypeMarginalsCalculator:
             self.alphabet = alphabet
             self.tokenizer = alphabet.get_batch_converter()
 
-        self.clinvar_model = self.regression_over_clin_var(clinvar_path)
+        self.clinvar_models = self.regression_over_clinvar(clinvar_path)
 
-    def regression_over_clinvar(self, mutation_file: str) -> LogisticRegression:
+    @staticmethod
+    def regression_over_clinvar(mutation_file: str):
         """
-        Train a logistic regression classifier on ClinVar mutations.
-
-        Parameters
-        ----------
-        mutation_file : str
-            Path to a CSV file containing ClinVar mutations, with columns:
-            - 'esm1b_log_prob' : float
-            - 'is_disordered'  : int (0 or 1)
-            - 'label'          : int (0 benign, 1 pathogenic)
-
-        Returns
-        -------
-        LogisticRegression
-            A trained scikit-learn LogisticRegression model.
+        Train two logistic regression classifiers on ClinVar mutations:
+        one for ordered regions and one for disordered regions.
         """
-
-        # TODO check with Gal if that what he meant
-
-        # Load dataset
         df = pd.read_csv(mutation_file)
+        df['is_disordered'] = df['is_disordered'].replace({'True': 1, 'False': 0})
+        df['ClinicalSignificance'] = df['ClinicalSignificance'].replace({
+            'Pathogenic': 1, 'Likely pathogenic': 1,
+            'Benign': 0, 'Likely benign': 0
+        })
+        df = df.dropna(subset=['ClinicalSignificance'])
 
-        # Build feature matrix
-        X = df[['esm1b_log_prob', 'is_disordered']].values
-        y = df['label'].values
+        models = {}
+        for disorder_flag in [0, 1]:
+            subset = df[df['is_disordered'] == disorder_flag].copy()
+            subset = subset.dropna(subset=['esm1b_log_prob'])
 
-        # Train logistic regression
-        model = LogisticRegression()
-        model.fit(X, y)
+            if subset.empty:
+                continue
 
-        return model
+            # remove extreme outliers
+            lower, upper = subset['esm1b_log_prob'].quantile([0.001, 0.999])
+            subset = subset[(subset['esm1b_log_prob'] >= lower) &
+                            (subset['esm1b_log_prob'] <= upper)]
+
+            X = subset[['esm1b_log_prob']].values
+            y = subset['ClinicalSignificance'].astype(int).values
+
+            model = LogisticRegression(solver="lbfgs", max_iter=1000)
+            model.fit(X, y)
+            models[disorder_flag] = model
+
+        return models
 
     def _get_batch_tokens(self, sequence: str, name='WT') -> torch.Tensor:
         """
@@ -768,16 +773,23 @@ class WildtypeMarginalsCalculator:
 
         return df_processed
 
-    def normalize_scores_dis_ordered(self, df: pd.DataFrame) -> pd.DataFrame:
-        """"""
+    def scores_dis_ordered(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calibrate raw ESM scores into pathogenicity probabilities using
+        separate logistic regression models for ordered vs disordered regions.
+        Vectorized implementation for efficiency.
+        """
+        df_processed = df.copy()
+        df_processed['esm_disorder_scoring'] = np.nan  # default NaN
 
-        # TODO check with Gal if that what he meant
+        for disorder_flag, model in self.clinvar_models.items():
+            mask = (df_processed['is_disordered'] == disorder_flag) & df_processed['score'].notna()
+            if mask.any():
+                scores = df_processed.loc[mask, 'score'].values.reshape(-1, 1)
+                probs = model.predict_proba(scores)[:, 1]
+                df_processed.loc[mask, 'esm_disorder_scoring'] = probs
 
-        X_for_prediction = df[['score', 'is_disordered']].values           # maybe use disorder_score?
-        predicted_prob_pathogenic = model.predict_proba(X_for_prediction)[:, 1]
-        df['esm_disorder_scoring'] = (1 - df['disorder_score']) * predicted_prob_pathogenic
-
-        return df
+        return df_processed
 
     def save_mutation_scores_to_csv_full(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
@@ -828,7 +840,7 @@ class WildtypeMarginalsCalculator:
         df_normalized = self.normalize_scores_min_max(df)
 
         # Normalize scores by the predicted esm and disorder
-        df_normalized = self.normalize_scores_dis_ordered(df_normalized)
+        df_normalized = self.scores_dis_ordered(df_normalized)
 
         # Save the updated DataFrame to a new CSV file
         df_normalized.to_csv(output_csv_path, index=False)
@@ -841,8 +853,8 @@ class WildtypeMarginalsCalculator:
 
 
 class DisorderPredict:
-    def __init__(self):
-        pass
+    def __init__(self, kegg):
+        self.kegg = kegg
 
     def load_sequences_to_predict(self, sequences_pickle_file: str, recalc: bool=False) -> Optional[Dict[str, str]]:
         """
@@ -858,19 +870,17 @@ class DisorderPredict:
         if os.path.exists(sequences_pickle_file) and not recalc:
             print(f"Loading pre-processed sequences from cache: {sequences_pickle_file}")
             with open(sequences_pickle_file, 'rb') as f:
-                print(f"Loading {len(sequences_to_predict)} sequences from cache...")
                 return pickle.load(f)
         else:
             print("Processing sequences from scratch (or recalc=True)...")
-            all_genes = list(kegg.get_all_genes().keys())
+            all_genes = list(self.kegg.get_all_genes().keys())
             sequences_to_predict = {}
             for gene_id in tqdm(all_genes, desc="Loading and cleaning gene sequences"):
                 try:
                     gene = KeggGene(gene_id)
                     if gene.aa_seq:
                         # Clean sequence based on metapredict V3 rules
-                        processed_seq = gene.aa_seq.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z',
-                                                                                                                  'Q')
+                        processed_seq = gene.aa_seq.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
                         processed_seq = processed_seq.replace(' ', '').replace('*', '').replace('-', '')
                         if processed_seq:
                             sequences_to_predict[gene_id] = processed_seq
@@ -883,7 +893,8 @@ class DisorderPredict:
 
             return sequences_to_predict
 
-    def predict(self, sequences_to_predict: Dict[str, str]) -> None:
+    @staticmethod
+    def predict(sequences_to_predict: Dict[str, str]) -> None:
         """
         Predict disorder for the given sequences and merge results into SNV CSV files.
 

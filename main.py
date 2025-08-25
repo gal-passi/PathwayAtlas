@@ -95,7 +95,7 @@ def disordered_aa_prediction(kegg: KeggApi, recalc=False):
     os.makedirs(KEGG_DISORDERED_AA_PATH, exist_ok=True)
     sequences_pickle_file = os.path.join(KEGG_DISORDERED_AA_PATH, "sequences_to_predict.pkl")
 
-    disorder_predict = DisorderPredict()
+    disorder_predict = DisorderPredict(kegg)
 
     # Step 1: Load or create the dictionary of cleaned sequences [V3].
     sequences_to_predict = disorder_predict.load_sequences_to_predict(sequences_pickle_file, recalc)
