@@ -59,5 +59,4 @@ def get_studies():
         except Exception as e:
             print(f"Skipping {study_id}: {e}")
 
-    check_for_duplicates(dfs)
     return dfs
