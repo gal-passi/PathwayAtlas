@@ -75,7 +75,8 @@ CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
 STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'StudyId', 'RefDNA']
 # exclude only on patient key and protein change to avoid problems with hg19/hg18
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
-
+VARIATION_REGEX = r"([A-Z])(\d+)([A-Z])"
+PROBLEMATIC_STUDIES = ["braf_msk_archer_2024", "ovary_geomx_gray_foundation_2024", "prad_mskcc_2014"]
 
 #  KEGG
 
