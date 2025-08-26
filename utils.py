@@ -512,6 +512,7 @@ class WildtypeMarginalsCalculator:
             self.tokenizer = alphabet.get_batch_converter()
 
         self.clinvar_models = self.regression_over_clinvar(clinvar_path)
+        # TODO get new and much bigger ClinVar data from Gal
 
     @staticmethod
     def regression_over_clinvar(mutation_file: str):
