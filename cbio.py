@@ -1,5 +1,8 @@
+from setuptools.dist import sequence
+
 from utils import *
 from Kegg import *
+from definitions import *
 import os
 
 """
@@ -31,12 +34,19 @@ def check_for_duplicates(dfs):
         print(f"found {len(overlaps)} overlapping patients.")
 
 
-def get_studies(cbio: CbioApi):
+def get_studies(cbio: CbioApi) -> dict:
     """Retrieve all cBioPortal studies.
         Downloads mutations for each study and saves them as CSV files.
         Returns a dictionary of study_id to DataFrame of mutations.
     """
-    dfs = {}
+
+    if os.path.exists('studies_dfs.pkl'):
+        with open('studies_dfs.pkl', 'rb') as f:
+            studies_dfs = pickle.load(f)
+            print("Opened existing studies_dfs.pkl")
+            return studies_dfs
+
+    studies_dfs = {}
     all_studies = cbio.api.Studies.getAllStudiesUsingGET().result()
 
     for study in all_studies:
@@ -50,33 +60,43 @@ def get_studies(cbio: CbioApi):
 
             if os.path.exists(outpath):
                 print(f"{study_id} mutations already downloaded.")
-                dfs[study_id] = pd.read_csv(outpath)
+                studies_dfs[study_id] = pd.read_csv(outpath)
             else:
                 # Save DataFrame to CSV
                 df = cbio.study_to_csv(results, outpath=outpath)
-                dfs[study_id] = df
+                studies_dfs[study_id] = df
                 print(f"Saved {study_id}_mutations.csv")
         except Exception as e:
             print(f"Skipping {study_id}: {e}")
 
+    with open('studies_dfs.pkl', 'wb') as f:
+        pickle.dump(studies_dfs, f)
+
     print("Downloaded all studies.")
-    return dfs
+    return studies_dfs
 
 
-def merge_studies(cbio, dfs, remove_duplicates=True):
+def merge_studies(cbio, dfs, remove_duplicates=True) -> dict:
     """
     merge the studies of the same cancer type into a single dataframe.
     @param cbio: cBioPortal API object
     @param dfs: dictionary of study id to DataFrame of that study, returned by 'get_studies()'.
     @param remove_duplicates: remove duplicate studies if True.
     """
+
+    if os.path.exists('cancer_dfs.pkl'):
+        with open('cancer_dfs.pkl', 'rb') as f:
+            cancer_dfs = pickle.load(f)
+            print("Opened existing cancer_dfs.pkl")
+            return cancer_dfs
+
     cancer_dfs = {}
     cancer_types_dict = cbio.cancer_types_dict()
 
     for cancer_type, short_cancer_name in cancer_types_dict.items():
-
         # Get all studies for the given cancer type
         study_ids, study_names = cbio.all_studies_by_keyword(short_cancer_name.lower())
+
         study_ids = [id for id in study_ids if id in dfs.keys()]
 
         if not study_ids:
@@ -102,73 +122,47 @@ def merge_studies(cbio, dfs, remove_duplicates=True):
             cancer_dfs[cancer_type] = merged_df
             print(f"Saved {short_cancer_name.lower()}_mutations.csv")
 
+    with open('cancer_dfs.pkl', 'wb') as f:
+        pickle.dump(cancer_dfs, f)
+
     print("Merged all cancer studies.")
     return cancer_dfs
 
-
-def get_uniprot_canonical_sequence(gene_name: str, organism: str = "Homo sapiens") -> str:
+def add_sequences_to_mutations():
     """
-    Fetches the canonical UniProt protein sequence for a given gene name and species.
-
-    Args:
-        gene_name (str): Gene symbol (e.g., "DNMT1").
-        organism (str): Organism name (default = "Homo sapiens").
-
-    Returns:
-        str: The canonical protein sequence (FASTA format).
+    Add sequences to all mutations in the downloaded csvs.
     """
-    search_url = "https://rest.uniprot.org/uniprotkb/search"
-    params = {
-        "query": f'gene_exact:{gene_name} AND organism_name:"{organism}" AND reviewed:true',
-        "fields": "accession",
-        "size": 1
-    }
-    response = requests.get(search_url, params=params)
-    response.raise_for_status()
-    data = response.json()
+    for cancer_file in os.listdir(CANCERS_PATH):
+        if cancer_file.endswith('_mutations.csv'):
+            cancer_path = os.path.join(CANCERS_PATH, cancer_file)
+            df = pd.read_csv(cancer_path)
 
-    if not data.get("results"):
-        raise ValueError(f"No reviewed UniProt entry found for gene {gene_name} in {organism}")
-
-    accession = data["results"][0]["primaryAccession"]
-
-    # Step 2: Fetch the FASTA sequence for that accession
-    fasta_url = f"https://rest.uniprot.org/uniprotkb/{accession}.fasta"
-    fasta_response = requests.get(fasta_url)
-    fasta_response.raise_for_status()
-    fasta_text = fasta_response.text
-
-    # Step 3: Parse FASTA to get sequence string
-    lines = fasta_text.splitlines()
-    sequence = "".join(lines[1:])  # skip header
-    return sequence
-
-
-def check_sequences(cancer_dfs):
-
-    for cancer, df in cancer_dfs.items():
-        for row in df.itertuples(index=False):
-            protein = row.Protein
-            variant = row.Variant
-
-            sequence = get_uniprot_canonical_sequence(protein)
-            match = re.match(r"([A-Z])(\d+)([A-Z])", variant)
-            if not match:
-                raise ValueError(f"Invalid mutation format: {variant}")
-
-            ref_aa, pos, alt_aa = match.groups()
-            pos = int(pos)
-
-            # UniProt is 1-based indexing, Python is 0-based
-            # TODO: check if this works now
-            if pos > len(sequence) or pos < 1:
-                print(
-                    f"Variant position {pos} is out of range for protein {protein} (length {len(sequence)}). Skipping.")
+            if REFERENCE_SEQ_COL in df.columns:
+                print(f"Sequences already added to {cancer_file}. Skipping.")
                 continue
+            df[REFERENCE_SEQ_COL] = None
+            df = add_seq_to_df(df)
+            df.to_csv(cancer_path, index=False)
+            print(f"Added sequences to {cancer_file}.")
 
-            seq_aa = sequence[pos - 1]
-            if seq_aa != ref_aa:
-                print(f"Wrong sequence for protein {protein}: expected {ref_aa} at position {pos}, found {seq_aa}")
+def add_seq_to_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add sequences to all mutations in the given dataframe.
+    @param df: DataFrame of mutations.
+    @return: DataFrame with sequences added.
+    """
+    uniprot = UniprotApi()
+    protein_sequences = {}
 
-        print(f"Finished validating sequences in cancer type {cancer}.")
-    print("Finished validating sequences.")
+    for idx, row in df.iterrows():
+        ref_name = row['Protein']
+        ref_mut = row['Variant']
+        iso_seq_dict = uniprot.expand_isoforms(ref_name, ref_mut)
+        if iso_seq_dict is None or len(iso_seq_dict) > 1 or len(iso_seq_dict) == 0:
+            print(f"Skipping row {idx}: no correct sequence found for {ref_name}")
+            continue
+        print(f"Adding sequence for {ref_name} at row {idx}")
+        seq = list(iso_seq_dict.values())[0] # get the only sequence
+        protein_sequences[ref_name] = seq
+        df.at[idx, REFERENCE_SEQ_COL] = seq
+    return df

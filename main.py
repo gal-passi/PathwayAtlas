@@ -112,4 +112,4 @@ if __name__ == '__main__':
     cbio = CbioApi()
     dfs = get_studies(cbio)
     cancer_dfs = merge_studies(cbio, dfs)
-    check_sequences(cancer_dfs)
+    add_sequences_to_mutations()

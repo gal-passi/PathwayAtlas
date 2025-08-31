@@ -16,10 +16,35 @@ import re
 import glob
 from torch.nn.functional import log_softmax
 import torch
+import tempfile
 
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
+
+def print_if(verbose: object, thr: object, text: object) -> object:
+    """
+    print text if verbose > thr
+    :param verbose: int
+    :param thr: int
+    :param text: str
+    :return:
+    """
+    if verbose >= thr:
+        print(text)
+
+
+def process_fastas(text):
+    """
+    process multiple fasta sequences
+    :return: {id: sequence}
+    """
+    temp = tempfile.TemporaryFile(mode='w+t')
+    temp.writelines(text)
+    temp.seek(0)
+    ret = {seq_record.id: str(seq_record.seq) for seq_record in SeqIO.parse(temp, "fasta")}
+    temp.close()
+    return ret
 
 def read_in_chunks(array, chunk_size):
     for i in range(0, len(array), chunk_size):
@@ -103,8 +128,133 @@ def multiprocess_task(tasks, target, workers=None, callback=lambda x: x):
             print(f"Multiprocessing task failed: {e}")
 
 
+def warn_if(verbose, thr, text):
+    """
+    print text if verbose > thr
+    :param verbose: int
+    :param thr: int
+    :param text: str
+    :return:
+    """
+    if verbose >= thr:
+        warnings.warn(text)
+
+
+def safe_post_request(session, url, timeout, verbose_level, warning_msg='connection failed', return_on_failure=None,
+                      warning_thr=VERBOSE['thread_warnings'], raw_err_thr=VERBOSE['raw_warnings']):
+    """
+    creates a user friendly request raises warning on ConnectionError but will not crush
+    verbose_level = 3 will return raw Error massage in warning
+    :param session: requests session obj
+    :param url: str url to query
+    :param timeout: float max time to wait for response
+    :param verbose_level: int
+    :param warning_msg: str msg to display on failure
+    :param return_on_failure: value to return upon exception
+    :param raw_err_thr: int threshold to print raw error messages
+    :param warning_thr: int threshold to print warning messages
+    :return: response
+    """
+    try:
+        r = session.post(url, timeout=timeout)
+    except requests.exceptions.ConnectionError as e:
+        warn_if(verbose_level, warning_thr, warning_msg)
+        warn_if(verbose_level, raw_err_thr, f"{e}")
+        return return_on_failure
+    return r
+
+
 def kegg_genes_in_dataset():
     return {os.path.basename(path)[:-7].replace('_', ':') for path in glob.glob(pjoin(KEGG_GENES_PATH, '*'))}
+
+
+class UniprotApi:
+    """
+    This class is responsible to connect to online DBs and retrieve information
+    """
+
+    def __init__(self, verbose_level=1):
+        self._v = verbose_level
+
+    def fetch_uniport_sequences(self, uid):
+        """
+        Retrieve all known isoforms from uniprot
+        :param uid: Uniprot id only primary name
+        :return: {uid_iso_index: sequence}
+        """
+        print_if(self._v, VERBOSE['thread_progress'], "Retrieving isoforms from Uniprt...")
+        s = create_session(DEFAULT_HEADER, RETRIES, WAIT_TIME, RETRY_STATUS_LIST)
+        url = Q_UNIP_ALL_ISOFORMS.format(uid, uid)
+        response = safe_post_request(s, url, TIMEOUT, self._v, CON_ERR_FUS.format(uid, url))
+        if not response.ok:
+            print_if(self._v, VERBOSE['thread_warnings'], CON_ERR_GENERAL.format('fetch_uniprot_sequences', uid))
+            return {}
+        if response.text == '':
+            print_if(self._v, VERBOSE['thread_warnings'], f"no sequences found for {uid}")
+            return {}
+        return process_fastas(response.text)
+
+    def expand_isoforms(self, ref_name, ref_mut=None):
+        """
+        expand protein isoforms using all relevant Uniprot accession
+        this will not override the default protein isoforms
+        :param ref_name: protein name
+        :param ref_mut: Mutation obj if given will search for isoform with the given mutation
+        :return: {uid_iso_index: seq}
+        """
+        uids = self.uid_from_name(ref_name)
+        isoforms = {}
+
+        if ref_mut:
+            idx, wt = ref_mut.loc - 1, ref_mut.origAA
+
+        for uid in uids:
+            res = self.fetch_uniport_sequences(uid)
+            if ref_mut:
+                for iso, seq in res.items():
+                    if idx >= len(seq):
+                        continue
+                    if seq[idx] == wt:
+                        return {iso: seq}
+            isoforms = {**isoforms, **res}
+        return isoforms if not ref_mut else {}
+
+    def uid_from_name(self, ref_name):
+        """
+        return uniprot-id given a protein ref_name
+        :param ref_name: protein name
+        :return: {'reviewed': [...], 'non_reviewed': [...]}
+        """
+        ret = {'reviewed': [], 'non_reviewed': [], 'main_entery': [], 'all_enteries': [], 'aliases': []}
+        query = UNIP_QUERY_URL + Q_UID_PROT_ALL.format(ref_name)
+        s = create_session(DEFAULT_HEADER, RETRIES, WAIT_TIME, RETRY_STATUS_LIST)
+        r = safe_get_request(s, query, TIMEOUT, self._v, CON_ERR_UFN.format(ref_name))
+        if not r:
+            return ret
+        if r.text == '':
+            return ret
+        ret = self._process_uid_query(r.text)
+        return ret
+
+    @staticmethod
+    def _process_uid_query(data):
+        ret = {'reviewed': [], 'non_reviewed': [], 'main_entery': [], 'all_enteries': [], 'aliases': []}
+        rows = data.split('\n')[1:-1]  # first is header last is blank
+        if not rows:
+            return ret
+        main_entry = rows[0].split('\t')[UIDS_COL_IDX]  # first entry is considered main
+        ret['main_entery'].append(main_entry)
+        for row in rows:
+            values = row.split('\t')
+            entry, reviewed, gene = values[UIDS_COL_IDX], values[REVIEWED_COL_IDX], values[GENE_NAME_COL_IDX].split(" ")
+            ret['all_enteries'].append(entry)
+            ret['aliases'] += gene
+            if reviewed == UNIP_REVIEWED:
+                ret['reviewed'].append(entry)
+            else:
+                ret['non_reviewed'].append(entry)
+        return ret
+
 
 class CbioApi:
     """api for cbio portal"""

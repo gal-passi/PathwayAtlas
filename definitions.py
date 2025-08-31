@@ -17,17 +17,28 @@ def load_dict(path):
 
 DB = 'data'
 CBIO_PATH = pjoin(DB, 'cbio')
-KEGG_PATH = pjoin(DB, 'kegg')
 STUDIES_PATH = pjoin(CBIO_PATH, 'studies')
+CANCERS_PATH = pjoin(CBIO_PATH, 'cancers')
+
+KEGG_PATH = pjoin(DB, 'kegg')
 KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')
 KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')
 KEGG_PATHWAY_OBJECTS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'objects')
 KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')
 
 
+
 DIRS_TO_CREATE = [DB, CBIO_PATH, KEGG_PATH, STUDIES_PATH, KEGG_GENES_PATH, KEGG_PATHWAYS_PATH,
                   KEGG_PATHWAY_OBJECTS_PATH,KEGG_PATHWAY_MUTATIONS_PATH]
 
+# QUERIES
+
+UIDS_COL_IDX = 0
+REVIEWED_COL_IDX = 2
+GENE_NAME_COL_IDX = 4
+UNIP_REVIEWED = 'reviewed'
+UNIP_QUERY_URL = "https://rest.uniprot.org/uniprotkb/search?"
+Q_UID_PROT_ALL = "fields=&gene&format=tsv&query={}+AND+organism_id:9606"
 
 #   REQUESTS AND OS CONSTANTS
 
@@ -68,6 +79,11 @@ FAMANALYSIS_COLUMNS = ['Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'
 
 #   CBIOPORTAL
 
+VERBOSE = {'critical': 0, 'program_warning': 1, 'program_progress': 1,
+           'thread_warnings': 2, 'thread_progress': 3, 'raw_warnings': 3}
+Q_UNIP_ALL_ISOFORMS = UNIP_QUERY_URL + "&format=fasta&query=" \
+                                          "(accession:{}+AND+is_isoform:true)+OR+(accession:{}+AND+is_isoform:false)"
+
 CBIO_API_URL = 'https://www.cbioportal.org/api/v2/api-docs'
 MISSENSE_MUTATION = 'Missense_Mutation'
 CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
@@ -77,6 +93,7 @@ STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'S
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
 VARIATION_REGEX = r"([A-Z])(\d+)([A-Z])"
 PROBLEMATIC_STUDIES = ["braf_msk_archer_2024", "ovary_geomx_gray_foundation_2024", "prad_mskcc_2014"]
+REFERENCE_SEQ_COL = 'ReferenceSeq'
 
 #  KEGG
 
@@ -127,3 +144,6 @@ NETWORK_TYPE_ERROR = f'Network type must be one of: {", ".join(NETWORK_TYPES)}'
 NETWORK_ID_ERROR = f'KEGG id must be of a KEGG module or KEGG pathway'
 LOAD_OBJ_ERROR = 'Data missing or invalid for {}. ' \
                  '\nDelete instance from DB and recreate the object'
+CON_ERR_FUS = "Connection Error in fetch_uniport_sequences while fetching isoforms for {}\nURL: "
+CON_ERR_GENERAL = "Connection Error in {} on protein {}"
+CON_ERR_UFN = "Connection Error in uid_from_name failed to fetch Uniprot IDs for protein {}"

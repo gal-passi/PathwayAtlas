@@ -18,7 +18,7 @@ source ./venv/bin/activate
 #pip install --no-cache-dir -r requirements.txt
 
 # export esm model path to local venv
-export TORCH_HOME=./venv/torch_cache
+#export TORCH_HOME=./venv/torch_cache
 
 # run code (output in slurm .out file)
 python -u main.py
