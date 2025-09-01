@@ -1,7 +1,7 @@
 import os
 import warnings
 from typing import Union, List
-
+from Bio import SeqIO
 import numpy as np
 
 from definitions import *
@@ -194,7 +194,7 @@ class UniprotApi:
             return {}
         return process_fastas(response.text)
 
-    def expand_isoforms(self, ref_name, ref_mut=None):
+    def expand_isoforms(self, ref_name, ref_mut=None, reviewed=True):
         """
         expand protein isoforms using all relevant Uniprot accession
         this will not override the default protein isoforms
@@ -202,19 +202,28 @@ class UniprotApi:
         :param ref_mut: Mutation obj if given will search for isoform with the given mutation
         :return: {uid_iso_index: seq}
         """
-        uids = self.uid_from_name(ref_name)
+        uids = self.uid_from_name(ref_name)['reviewed'] if reviewed else self.uid_from_name(ref_name)['all_enteries']
         isoforms = {}
 
-        if ref_mut:
-            idx, wt = ref_mut.loc - 1, ref_mut.origAA
+        if isinstance(ref_mut, str):
+            match = re.match(VARIATION_REGEX, ref_mut)
+            if not match:
+                raise ValueError(f"Invalid mutation format: {ref_mut}")
+            orig_aa, loc, mut_aa = match.groups()
+            idx = int(loc) - 1
+        else:
+            idx = ref_mut.loc - 1
+            orig_aa = ref_mut.origAA
 
+
+        # Search for isoforms that have a fitting sequence to the mutation
         for uid in uids:
             res = self.fetch_uniport_sequences(uid)
             if ref_mut:
                 for iso, seq in res.items():
                     if idx >= len(seq):
                         continue
-                    if seq[idx] == wt:
+                    if seq[idx] == orig_aa:
                         return {iso: seq}
             isoforms = {**isoforms, **res}
         return isoforms if not ref_mut else {}

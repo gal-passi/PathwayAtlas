@@ -111,7 +111,7 @@ def merge_studies(cbio, dfs, remove_duplicates=True) -> dict:
             merged_df.drop_duplicates(keep='first', inplace=True, ignore_index=True, subset=DUPLICATE_EXCLUSION_COLUMNS)
 
         # Define file name for each cancer
-        outpath = f"data/cbio/cancers/{short_cancer_name.lower()}_mutations.csv"
+        outpath = CANCERS_PATH + short_cancer_name.lower() + MUTATIONS_CSV_SUFFIX
 
         if os.path.exists(outpath):
             print(f"{cancer_type} mutations already downloaded.")
@@ -120,7 +120,7 @@ def merge_studies(cbio, dfs, remove_duplicates=True) -> dict:
             # Save merged DataFrame to CSV
             merged_df.to_csv(outpath, index=False)
             cancer_dfs[cancer_type] = merged_df
-            print(f"Saved {short_cancer_name.lower()}_mutations.csv")
+            print(f"Saved {short_cancer_name.lower() + MUTATIONS_CSV_SUFFIX}")
 
     with open('cancer_dfs.pkl', 'wb') as f:
         pickle.dump(cancer_dfs, f)
@@ -128,41 +128,71 @@ def merge_studies(cbio, dfs, remove_duplicates=True) -> dict:
     print("Merged all cancer studies.")
     return cancer_dfs
 
+
 def add_sequences_to_mutations():
     """
     Add sequences to all mutations in the downloaded csvs.
     """
+    protein_seq_dict = {}
+
+    if os.path.exists(PROTEIN_SEQUENCES_FILE):
+        with open(PROTEIN_SEQUENCES_FILE, 'rb') as f:
+            protein_seq_dict = pickle.load(f)
+            print(f"Opened existing {PROTEIN_SEQUENCES_FILE}")
+
     for cancer_file in os.listdir(CANCERS_PATH):
         if cancer_file.endswith('_mutations.csv'):
             cancer_path = os.path.join(CANCERS_PATH, cancer_file)
             df = pd.read_csv(cancer_path)
 
-            if REFERENCE_SEQ_COL in df.columns:
+            if REFERENCE_SEQ_COL and UNIPROT_ID_COL in df.columns:
                 print(f"Sequences already added to {cancer_file}. Skipping.")
                 continue
-            df[REFERENCE_SEQ_COL] = None
-            df = add_seq_to_df(df)
-            df.to_csv(cancer_path, index=False)
-            print(f"Added sequences to {cancer_file}.")
 
-def add_seq_to_df(df: pd.DataFrame) -> pd.DataFrame:
+            df[REFERENCE_SEQ_COL] = None  # initialize the column
+            df[UNIPROT_ID_COL] = None
+
+            df, protein_seq_dict = add_seq_to_df(df, protein_seq_dict)
+            df.to_csv(cancer_path, index=False)
+            print(f"All sequences added to {cancer_file}.")
+
+    # save updated cache
+    with open(PROTEIN_SEQUENCES_FILE, 'wb') as f:
+        pickle.dump(protein_seq_dict, f)
+        print(f"Cache updated in {PROTEIN_SEQUENCES_FILE}")
+
+def add_seq_to_df(df: pd.DataFrame, protein_seq_dict):
     """
-    Add sequences to all mutations in the given dataframe.
-    @param df: DataFrame of mutations.
-    @return: DataFrame with sequences added.
+    Add sequences to all proteins in the given dataframe.
+    @param df: DataFrame of proteins.
+    @param protein_seq_dict: dictionary of protein name to sequence.
+    @return: DataFrame with sequences added and updated protein_seq_dict.
     """
     uniprot = UniprotApi()
-    protein_sequences = {}
 
     for idx, row in df.iterrows():
-        ref_name = row['Protein']
-        ref_mut = row['Variant']
-        iso_seq_dict = uniprot.expand_isoforms(ref_name, ref_mut)
-        if iso_seq_dict is None or len(iso_seq_dict) > 1 or len(iso_seq_dict) == 0:
+        ref_name = row[PROTEIN_NAME_COL]
+        ref_mut = row[VARIANT_COL]
+
+        # Search in cache first
+        if ref_name in protein_seq_dict:
+            uid, seq = protein_seq_dict[ref_name]
+            df.at[idx, REFERENCE_SEQ_COL] = seq
+            df.at[idx, UNIPROT_ID_COL] = uid
+            continue
+
+        # Fetch from Uniprot
+        iso_seq = uniprot.expand_isoforms(ref_name, ref_mut)
+        if iso_seq is None or len(iso_seq) != 1:
             print(f"Skipping row {idx}: no correct sequence found for {ref_name}")
             continue
+
         print(f"Adding sequence for {ref_name} at row {idx}")
-        seq = list(iso_seq_dict.values())[0] # get the only sequence
-        protein_sequences[ref_name] = seq
+        uid = list(iso_seq.keys())[0]
+        seq = list(iso_seq.values())[0] # get the only sequence
+        df.at[idx, UNIPROT_ID_COL] = uid
         df.at[idx, REFERENCE_SEQ_COL] = seq
-    return df
+
+        protein_seq_dict[ref_name] = uid, seq  # update cache
+
+    return df, protein_seq_dict

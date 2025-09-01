@@ -26,6 +26,12 @@ KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')
 KEGG_PATHWAY_OBJECTS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'objects')
 KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')
 
+# FILES
+
+STUDIES_DFS = pjoin(DB, 'studies_dfs.pkl')
+CANCER_DFS = pjoin(DB, 'cancer_dfs.pkl')
+PROTEIN_SEQUENCES_FILE = pjoin(DB, 'protein_sequences.pkl')
+MUTATIONS_CSV_SUFFIX = '_mutations.csv'
 
 
 DIRS_TO_CREATE = [DB, CBIO_PATH, KEGG_PATH, STUDIES_PATH, KEGG_GENES_PATH, KEGG_PATHWAYS_PATH,
@@ -42,7 +48,7 @@ Q_UID_PROT_ALL = "fields=&gene&format=tsv&query={}+AND+organism_id:9606"
 
 #   REQUESTS AND OS CONSTANTS
 
-TIMEOUT = 3.0
+TIMEOUT = 20.0
 WAIT_TIME = 1.0
 RETRIES = 7
 RETRY_STATUS_LIST = [429, 500, 502, 503, 504, 403, 400]
@@ -94,6 +100,9 @@ DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
 VARIATION_REGEX = r"([A-Z])(\d+)([A-Z])"
 PROBLEMATIC_STUDIES = ["braf_msk_archer_2024", "ovary_geomx_gray_foundation_2024", "prad_mskcc_2014"]
 REFERENCE_SEQ_COL = 'ReferenceSeq'
+UNIPROT_ID_COL = 'UniprotId'
+PROTEIN_NAME_COL = 'Protein'
+VARIANT_COL = 'Variant'
 
 #  KEGG
 
