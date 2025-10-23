@@ -87,7 +87,7 @@ class BackgroundModel:
         return pathway_scores, pathway_id
 
     def create_joint_distribution(self, pathway_scores,
-                                  score_type="clinvar_reg_dis_ordered_prob", bins=100, range=(0, 1)):
+                                  score_type="clinvar_reg_dis_ordered_prob", bins=BINS_NUM, range=(0, 1)):
         """
         Calculate the joint distribution for a pathway using the pssm matrix as weights.
 
@@ -103,7 +103,7 @@ class BackgroundModel:
         score_type : str, optional
             The type of score to use from pathway_scores, by default "esm_min_max_naive".
         bins : int, optional
-            The number of bins to use for creating the histograms, by default 100.
+            The number of bins to use for creating the histograms, by default BINS_NUM.
         range : tuple, optional
             The range of scores to consider for the histogram, by default (0, 1).
 
@@ -116,7 +116,7 @@ class BackgroundModel:
         # Initialize an array to hold the final mixed distribution (histogram y-values).
         joint_distribution = np.zeros(bins)
         # To normalize correctly, we need to track the sum of weights for which we have data.
-        total_weight_used = 0.0
+        total_weight_used = 0.0     # TODO the weight is the same all the time - the sum of the 12 relevant cells...
 
         # Pre-calculate bin edges to be used for all histograms.
         # This ensures all histograms are on the same x-axis.
@@ -157,7 +157,7 @@ class BackgroundModel:
 
 class GMM:
     def GMM_the_distribution(self, joint_distribution, bin_edges,
-                             n_components=2, n_samples=10000, random_state=None):
+                             n_components=GMM_COMPONENTS, n_samples=RANDOM_SAMPLE_NUM, random_state=None):
         """
         Fit a Gaussian Mixture Model (GMM) to a distribution defined by a histogram.
         Returns the fitted GMM and its BIC.
@@ -183,7 +183,7 @@ class GMM:
         return gmm, bic
 
     def GMM_bic_curve(self, joint_distribution, bin_edges, max_components=10,
-                      n_samples=10000, random_state=None, filename='bic_curve'):
+                      n_samples=RANDOM_SAMPLE_NUM, random_state=None, filename='bic_curve'):
         """
         Plot the BIC curve for different numbers of Gaussian components and save it.
 
@@ -365,3 +365,78 @@ class GMM:
             print(f"Successfully saved distribution for {pathway_id} to {file_path}")
         except Exception as e:
             print(f"Error saving distribution for {pathway_id}: {e}")
+
+
+
+
+class DistributionDistances:
+    """
+    A utility class to calculate distances between two data distributions.
+
+    Contains methods for:
+    - Chi-Squared distance from histograms.
+    - Kullback-Leibler (KL) Divergence from fitted Gaussian Mixture Models (GMMs).
+    """
+
+    @staticmethod
+    def chi_squared_from_hist(counts1: np.ndarray, counts2: np.ndarray) -> float:
+        """
+        Calculates the Chi-Squared distance between two pre-computed histograms.
+        This method assumes that both histograms were created using the exact same
+        set of bins.
+        Args:
+            counts1 (np.ndarray): An array of bin counts for the first histogram.
+            counts2 (np.ndarray): An array of bin counts for the second histogram.
+        Returns:
+            float: The calculated Chi-Squared distance. A smaller value indicates
+                   more similar distributions.
+        Raises:
+            ValueError: If the input count arrays do not have the same length.
+        """
+        if len(counts1) != len(counts2):
+            raise ValueError("Input histogram count arrays must have the same length.")
+
+        # Ensure counts are float to avoid integer division issues
+        counts1 = counts1.astype(float)
+        counts2 = counts2.astype(float)
+
+        numerator = (counts1 - counts2) ** 2
+        denominator = counts1 + counts2
+
+        # Handle bins where the denominator is zero (i.e., the bin is empty for both)
+        # The contribution of these bins to the distance is 0.
+        chi_squared_terms = np.divide(
+            numerator,
+            denominator,
+            out=np.zeros_like(numerator),  # Where denominator is 0, the output is 0
+            where=(denominator != 0)  # Condition for the division
+        )
+
+        return np.sum(chi_squared_terms)
+
+    @staticmethod
+    def kl_divergence_from_gmms(gmm_p: GaussianMixture, gmm_q: GaussianMixture,
+                                n_samples_mc: int = RANDOM_SAMPLE_NUM) -> float:
+        """
+        Calculates KL-Divergence KL(P || Q) between two pre-fitted GMMs.
+
+        This is the recommended method when you already have fitted GMMs.
+
+        Args:
+            gmm_p (GaussianMixture): The fitted GMM for distribution P.
+            gmm_q (GaussianMixture): The fitted GMM for distribution Q.
+            n_samples_mc (int): Number of samples for Monte Carlo approximation.
+
+        Returns:
+            float: The estimated KL-Divergence KL(P || Q).
+        """
+        # 1. Draw samples from the first GMM (P)
+        samples, _ = gmm_p.sample(n_samples_mc)
+
+        # 2. Calculate log-likelihood of samples under both models
+        log_p_p = gmm_p.score_samples(samples)
+        log_q_p = gmm_q.score_samples(samples)
+
+        # 3. The KL divergence is the expectation E[log(P(x)) - log(Q(x))]
+        return np.mean(log_p_p - log_q_p)
+

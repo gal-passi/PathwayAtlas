@@ -574,6 +574,7 @@ class KeggGene:
         self.coding_type = None
         self._dir_name = kegg_id.replace(':', '_')
         self._directory = pjoin(KEGG_GENES_PATH, self._dir_name + '.pickle')
+        self.gc_content = None
         if os.path.exists(self._directory):
             load_obj(self, self._directory, name=kegg_id)
         elif default_init:
@@ -587,6 +588,7 @@ class KeggGene:
         self.uniprot_id = kegg_api.convert_gene_names(kegg_id)  # dict
         self.aa_seq = kegg_api.gene_seq(kegg_id, 'aaseq')[kegg_id]
         self.na_seq = kegg_api.gene_seq(kegg_id, 'ntseq')[kegg_id]
+        self.gc_content = self.get_gc_content()
         save_obj(self, self._directory)
 
     def create_from_dict(self, data):
@@ -594,6 +596,11 @@ class KeggGene:
         self._dir_name = self.kegg_id.replace(':', '_')
         self._directory = pjoin(KEGG_GENES_PATH, self._dir_name + '.pickle')
         save_obj(self, self._directory)
+
+    def get_gc_content(self):
+        if not isinstance(self.na_seq, str) or not self.na_seq:
+            return None
+        return (self.na_seq.upper().count('G') + self.na_seq.upper().count('C')) / len(self.na_seq)
 
     @property
     def uid(self):
