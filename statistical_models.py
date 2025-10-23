@@ -13,40 +13,35 @@ import pickle
 
 class BackgroundModel:
     def __init__(self):
-        self.pathways_and_modules_folder = KEGG_PATHWAY_OBJECTS_PATH
+        self.pathways_folder = KEGG_PATHWAY_OBJECTS_PATH
 
-        # TODO find pssm scoring
-        # TODO move to definitions
-        self.pssm = {
-            "A>G": 1 / 12, "A>C": 1 / 12, "A>T": 1 / 12,
-            "G>A": 1 / 12, "G>C": 1 / 12, "G>T": 1 / 12,
-            "T>A": 1 / 12, "T>C": 1 / 12, "T>G": 1 / 12,
-            "C>A": 1 / 12, "C>G": 1 / 12, "C>T": 1 / 12
-        }
+        # TODO change pssm scoring to michal`s pssm
+        self.pssm = UNIFY_PSSM
 
 
     def collect_scores(self):
         """
-        For each pathway, go through the genes in it and collect all mutation scores:
-        ["normalized_score", "esm_disorder_scoring"],
+        For each pathway, go through the genes in it and collect all mutation scoring:
+        ["esm_min_max_naive" - min-max on score, "clinvar_reg_..." - from the 3 regressors],
         splitting them into the 12 mutation types.
 
         Returns
         -------
         dict:
             { pathway_name:
-                { "A>C": {"normalized_score": [...], "esm_disorder_scoring": [...]},
+                { "A>C": {"esm_min_max_naive": [...],
+                            "clinvar_reg_dis_ordered_prob": [...], "clinvar_reg_global_prob": [...]},
                   "A>G": {...}, ...
                 }
             }
         """
         results = {}
 
-        for file_name in os.listdir(self.pathways_and_modules_folder):
+        for file_name in os.listdir(self.pathways_folder)[0:1000]:     # TODO remove debug here [0:100]
             if not file_name.endswith(".pickle"):
                 continue
 
-            pathway_file = os.path.join(self.pathways_and_modules_folder, file_name)
+            pathway_file = os.path.join(self.pathways_folder, file_name)
 
             try:
                 with open(pathway_file, "rb") as f:
@@ -63,41 +58,36 @@ class BackgroundModel:
 
     def pathway_scores_collecting(self, file_name, gene_to_csv):
         pathway_id = file_name.replace(".pickle", "")
-        pathway_scores = defaultdict(lambda: {"normalized_score": [], "esm_disorder_scoring": []})
-
+        pathway_scores = defaultdict(lambda: {"esm_min_max_naive": [],
+                                              "clinvar_reg_dis_ordered_prob": [],
+                                              "clinvar_reg_global_prob": []})
         for gene_id, csv_path in gene_to_csv.items():
-            if not os.path.exists(csv_path):
-                continue
-
-            try:
-                df = pd.read_csv(csv_path)
-            except Exception:
-                continue
-
-            # must have these cols
-            if not {"Ref", "Alt"}.issubset(df.columns):
-                continue
-
-            for _, row in df.iterrows():
-                ref, alt = str(row["Ref"]).upper(), str(row["Alt"]).upper()
-                mut_type = f"{ref}>{alt}"
-
+            if isinstance(csv_path, str) and os.path.exists(csv_path):
                 try:
-                    ns = float(row["normalized_score"])
-                except (ValueError, TypeError, KeyError):
-                    ns = None
+                    df = pd.read_csv(csv_path)
+                except Exception:
+                    continue
 
-                try:
-                    es = float(row["esm_disorder_scoring"])
-                except (ValueError, TypeError, KeyError):
-                    es = None
+                # must have these cols
+                if not {"Ref", "Alt"}.issubset(df.columns):
+                    continue
 
-                pathway_scores[mut_type]["normalized_score"].append(ns)
-                pathway_scores[mut_type]["esm_disorder_scoring"].append(es)
+                for _, row in df.iterrows():
+                    ref, alt = str(row["Ref"]).upper(), str(row["Alt"]).upper()
+                    mut_type = f"{ref}>{alt}"
+
+                    for score_type in SCORE_TYPES:
+                        try:
+                            score_val = float(row[score_type])
+                        except (ValueError, TypeError, KeyError):
+                            score_val = None
+
+                        pathway_scores[mut_type][score_type].append(score_val)
 
         return pathway_scores, pathway_id
 
-    def create_joint_distribution(self, pathway_scores, score_type="normalized_score", bins=100, range=(0, 1)):
+    def create_joint_distribution(self, pathway_scores,
+                                  score_type="clinvar_reg_dis_ordered_prob", bins=100, range=(0, 1)):
         """
         Calculate the joint distribution for a pathway using the pssm matrix as weights.
 
@@ -109,9 +99,9 @@ class BackgroundModel:
         ----------
         pathway_scores : dict
             A dictionary containing scores for each mutation type.
-            Example: { "A>C": {"normalized_score": [...]}, ... }
-        score_type : str, optional          [normalized_score or esm_disorder_scoring]
-            The type of score to use from pathway_scores, by default "normalized_score".
+            Example: { "A>C": {"esm_min_max_naive": [...]}, ... }
+        score_type : str, optional
+            The type of score to use from pathway_scores, by default "esm_min_max_naive".
         bins : int, optional
             The number of bins to use for creating the histograms, by default 100.
         range : tuple, optional
@@ -162,75 +152,103 @@ class BackgroundModel:
 
         return joint_distribution, bin_edges
 
-    def GMM_the_distribution(self, joint_distribution, bin_edges, max_components=10, n_samples=100000,
-                             random_state=None):
+
+
+
+class GMM:
+    def GMM_the_distribution(self, joint_distribution, bin_edges,
+                             n_components=2, n_samples=10000, random_state=None):
         """
         Fit a Gaussian Mixture Model (GMM) to a distribution defined by a histogram.
+        Returns the fitted GMM and its BIC.
+        """
+        # 1. Reconstruct the dataset from the histogram
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        counts = (joint_distribution * n_samples).astype(int)
 
-        This method first reconstructs a dataset from the histogram data, then
-        iteratively fits GMMs with different numbers of components. It uses the
-        Bayesian Information Criterion (BIC) to select the optimal number of
-        components and returns the best-fitted model. [1, 5, 6]
+        if np.sum(counts) == 0:
+            return None
+
+        reconstructed_data = np.repeat(bin_centers, counts).reshape(-1, 1)
+
+        # 2. fit model
+        gmm = GaussianMixture(
+            n_components=n_components,
+            random_state=random_state,
+            covariance_type='full'
+        )
+        gmm.fit(reconstructed_data)
+
+        bic = gmm.bic(reconstructed_data)
+        return gmm, bic
+
+    def GMM_bic_curve(self, joint_distribution, bin_edges, max_components=10,
+                      n_samples=10000, random_state=None, filename='bic_curve'):
+        """
+        Plot the BIC curve for different numbers of Gaussian components and save it.
 
         Parameters
         ----------
         joint_distribution : np.ndarray
-            The values (heights) of the histogram representing the distribution.
+            Histogram values of the distribution.
         bin_edges : np.ndarray
-            The edges of the histogram bins.
-        max_components : int, optional
-            The maximum number of Gaussian components to test, by default 10.
-        n_samples : int, optional
-            The number of samples to generate for reconstructing the dataset from
-            the histogram, by default 100000.
+            Histogram bin edges.
+        max_components : int
+            Maximum number of GMM components to test.
+        n_samples : int
+            Number of samples to reconstruct the dataset from the histogram.
         random_state : int, optional
-            A random state for reproducibility, by default None.
-
-        Returns
-        -------
-        sklearn.mixture.GaussianMixture
-            The best fitted Gaussian Mixture Model object, selected based on the
-            lowest BIC score. [3] Returns None if the input distribution is empty.
+            Random state for reproducibility.
+        filename : str
+            The base name for the saved plot file (e.g., 'my_bic_plot').
+            The extension '.png' will be added automatically.
         """
-        # 1. Reconstruct the dataset from the histogram
-        # Calculate the center of each bin
+        # 1. Reconstruct dataset
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-        # Calculate the number of samples to draw from each bin, proportional to its height
-        # This creates a representative dataset from the probability distribution
         counts = (joint_distribution * n_samples).astype(int)
 
-        # If there's no data to model, return None
         if np.sum(counts) == 0:
-            return None
+            print("Empty distribution, skipping GMM fitting.")
+            return
 
-        # Repeat each bin center 'count' times to generate the data
         reconstructed_data = np.repeat(bin_centers, counts).reshape(-1, 1)
 
-        # 2. Find the optimal number of components using BIC
-        lowest_bic = np.inf
-        best_gmm = None
-
-        # Define the range of component numbers to test
+        # 2. Fit GMMs with different n_components and record BIC
+        bics = []
         n_components_range = range(1, max_components + 1)
 
         for n_components in n_components_range:
-            # Fit a Gaussian Mixture Model
-            gmm = GaussianMixture(n_components=n_components,
-                                  random_state=random_state,
-                                  covariance_type='full')
+            gmm = GaussianMixture(
+                n_components=n_components,
+                random_state=random_state,
+                covariance_type='full'
+            )
             gmm.fit(reconstructed_data)
+            bics.append(gmm.bic(reconstructed_data))
 
-            # Calculate the BIC for the current model. [4]
-            bic = gmm.bic(reconstructed_data)
+        # 3. Plot the BIC curve
+        plt.figure(figsize=(6, 4))
+        plt.plot(n_components_range, bics, marker='o')
+        plt.xlabel("Number of components")
+        plt.ylabel("BIC score")
+        plt.title("GMM BIC Curve")
+        plt.grid(True)
 
-            # If the current model has a lower BIC, it's a better fit
-            if bic < lowest_bic:
-                lowest_bic = bic
-                best_gmm = gmm
+        # Construct the full save path
+        save_dir = "bic_for_selecting_num_of_gmm"
+        full_save_path = os.path.join(save_dir, f"{filename}.png")
 
-        # 3. Return the best model found
-        return best_gmm
+        # Ensure the directory exists
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            print(f"Created directory: {save_dir}")
+
+        # Save the figure
+        try:
+            plt.savefig(full_save_path, bbox_inches='tight', dpi=300)
+            print(f"BIC curve saved to: {full_save_path}")
+        except Exception as e:
+            print(f"Error saving BIC curve to {full_save_path}: {e}")
 
     def plot_1D_GMM(self, joint_distribution, bin_edges, gmm, ax=None):
         """
@@ -305,7 +323,7 @@ class BackgroundModel:
         ax.legend()
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
-        return ax
+        plt.show()
 
     def save_distribution(self, pathway_id, joint_distribution, bin_edges,
                           gmm_model=None, output_dir=DISTRIBUTIONS_PATH):
@@ -347,5 +365,3 @@ class BackgroundModel:
             print(f"Successfully saved distribution for {pathway_id} to {file_path}")
         except Exception as e:
             print(f"Error saving distribution for {pathway_id}: {e}")
-
-    # TODO add KDE smoothing option? It might be better in our case

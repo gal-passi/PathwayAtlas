@@ -1,5 +1,7 @@
+import itertools
+
+from statistical_models import BackgroundModel
 from utils import *
-from Kegg import *
 
 import os
 import pandas as pd
@@ -106,11 +108,12 @@ def disordered_aa_prediction(kegg: KeggApi, recalc=False):
     disorder_predict.predict(sequences_to_predict)
 
 
-def create_llr_scoring(kegg: KeggApi):
-    """Create LLR scoring for all KEGG proteins using ESM1b model"""
+def create_llr_and_dis_scoring(kegg: KeggApi):
+    """Create LLR scoring and esm-disorder scoring
+    for all KEGG proteins using ESM1b model"""
     # Load ESM1b model
     model, alphabet = pretrained.load_model_and_alphabet(ESM1B_MODEL)
-    calculator = WildtypeMarginalsCalculator(model=model, alphabet=alphabet)
+    calculator = ScoringCalculator(model=model, alphabet=alphabet)
 
     # Get KEGG genes
     all_genes = kegg.get_all_genes().keys()
@@ -124,45 +127,106 @@ def create_llr_scoring(kegg: KeggApi):
             gene = KeggGene(kegg_id)
             seq = gene.aa_seq
 
-            if not seq or any(aa not in VALID_AA for aa in seq):
-                # usually because CSV was not created due to gene length not being a multiple of 3
-                print(f"Skipping {kegg_id}: invalid or empty sequence")
+            if gene.coding_type != "CDS":
+                print(f"Skipping {kegg_id}: not a CDS, a {gene.coding_type}")
                 continue
+            elif not seq:
+                print(f"Skipping {kegg_id}: empty sequence")
+                continue
+            elif any(aa not in VALID_AA for aa in seq):
+                print(f"Skipping {kegg_id}: invalid sequence")
+                continue
+
             # Compute mutation scores [note that pathways and modules are already made]
-            calculator.save_mutation_scores_to_csv(seq, csv_path=os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv"))
+            csv_path = os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{kegg_id}.csv")
+            calculator.save_mutation_scores_to_csv(seq, csv_path)
+
         except Exception as e:
             print(f"Error processing {kegg_id}: {e}")
 
 
 
 
+# if __name__ == '__main__':
+#     # Lab Notebook:
+#     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
+#
+#
+#     kegg = KeggApi()
+#
+#     """
+#     # Step 1: Initialize KEGG genome (download all genes) [./data/kegg/genes]
+#     print("Downloading/Loading KEGG genome...")
+#     init_kegg_genome()
+#
+#     # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
+#     print("Creating all SNVs in all genes...")
+#     genes_all_snvs(kegg, recalc=True)
+#
+#     # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
+#     print("Mapping genes snvs to pathways and modules...")
+#     pathways_and_modules_dict(kegg)
+#     # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
+#     """
+#     # Step 4: for each AA, determine if it`s in disordered region (with metapredict)
+#     print("Disordered predictions...")
+#     disordered_aa_prediction(kegg)  # , recalc=True
+#
+#     # Step 5: create LLR scoring and disorder scoring (clinvar_reg_dis_ordered_prob) from ClinVar regressor,
+#     # And global regressor for all KEGG proteins
+#     # using ESM1b model (GPU recommended) [./data/kegg/pathways/snvs]
+#     print("Creating mutations scoring for all KEGG proteins...")
+#     create_llr_and_dis_scoring(kegg)
+#
+#     # Step 6: Create GMMs distributions for all pathways
+#     # TODO choose GMM number of component by BIC
+#     # TODO
 
-if __name__ == '__main__':
-    # Lab Notebook:
-    #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
 
 
-    kegg = KeggApi()
 
 
-    # Step 1: Initialize KEGG genome (download all genes) [./data/kegg/genes]
-    print("Downloading/Loading KEGG genome...")
-    init_kegg_genome()
 
-    # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
-    print("Creating all SNVs in all genes...")
-    genes_all_snvs(kegg, recalc=True)
 
-    # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
-    print("Mapping genes snvs to pathways and modules...")
-    pathways_and_modules_dict(kegg)
-    # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
-    
-    # Step 4: for each AA, determine if it`s in disordered region
-    print("Disordered predictions...")
-    disordered_aa_prediction(kegg, recalc=True)
 
-    # Step 5: create LLR scoring and disorder scoring for all KEGG proteins
-    # using ESM1b model (GPU recommended) and metapredict [./data/kegg/pathways/snvs]
-    print("Creating LLR scoring for all KEGG proteins...")
-    create_llr_scoring(kegg)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# # TODO delete this part
+# def create_GMM_debug():
+#     """This function is only for choosing the number of components in the GMMs"""
+#     print("BICing: collecting scores...")
+#     model = BackgroundModel()
+#     res = model.collect_scores()        # all pathways, all scores, from all genes
+#     for pathway_name, scores_dict in itertools.islice(res.items(), 200):       # example for 5 pathways
+#         joint_distribution, bins_edges = model.create_joint_distribution(res[pathway_name],
+#                                                                          score_type="clinvar_reg_dis_ordered_prob")
+#
+#         # plot some gmm
+#         #gmm, bic = model.GMM_the_distribution(joint_distribution, bins_edges)
+#         #model.plot_1D_GMM(joint_distribution, bins_edges, gmm)
+#
+#         # plot gmm bic curve
+#         print(f"BICing: {pathway_name}")
+#         model.GMM_bic_curve(joint_distribution, bins_edges, filename=pathway_name + "_bic")
+#
+# if __name__ == "__main__":
+#     create_GMM_debug()

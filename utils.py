@@ -6,7 +6,6 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
 
-from Kegg import KeggGene
 from definitions import *
 from bravado.client import SwaggerClient
 import pandas as pd
@@ -15,12 +14,12 @@ from requests.adapters import HTTPAdapter, Retry
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool as Pool
 import copy
-import re
 import glob
 from torch.nn.functional import log_softmax
 import torch
 
 import metapredict as meta
+
 
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
@@ -493,8 +492,199 @@ class KeggApi:
         return {kegg_id: gene_data}
 
 
+def gene_snvs_wrapper(gene):
+    return gene.all_snvs()
 
-class WildtypeMarginalsCalculator:
+def create_kegg_gene(gene_id_set):
+    gene_id = next(iter(gene_id_set))  # since each task is a set with one gene_id
+    return KeggGene(gene_id)
+
+
+class KeggNetwork:
+    """Object to represent KEGG Modules or Pathways using precomputed gene SNV files."""
+
+    def __init__(self, kegg_id, network_type):
+        self.id, self.type = kegg_id, network_type.lower()
+        self._dict_path = pjoin(KEGG_PATHWAY_OBJECTS_PATH, f"{self.id}.pickle")
+
+        assert self.type in NETWORK_TYPES, NETWORK_TYPE_ERROR
+
+        if not os.path.exists(self._dict_path):
+            raise FileNotFoundError(f"Missing gene SNV mapping for pathway/module: {self.id}")
+
+        self.gene_snv_map: dict = pd.read_pickle(self._dict_path)  # {kegg_id: path_to_snv_csv}
+        self.gene_list = list(self.gene_snv_map.keys())
+
+    def __len__(self):
+        return len(self.gene_list)
+
+    @property
+    def genes(self):
+        """Yield KeggGene instances for all genes in the network."""
+        for gene_id in self.gene_list:
+            yield KeggGene(gene_id)
+
+    def all_snvs(self, outpath='', index=True):
+        """
+        Load precomputed SNVs for all genes in the pathway.
+        :param index: bool, include index in final CSV
+        :param outpath: optional output CSV path (defaults to KEGG_PATHWAY_MUTATIONS_PATH/<id>.csv)
+        :return: DataFrame of concatenated SNVs
+        """
+        collector = []
+        for gene_id in tqdm(self.gene_list, desc=f"Reading SNVs for {self.id}", unit="gene"):
+            snv_file = self.gene_snv_map.get(gene_id)
+            if snv_file and os.path.exists(snv_file):
+                try:
+                    df = pd.read_csv(snv_file)
+                    if not df.empty:
+                        collector.append(df)
+                except Exception as e:
+                    print(f"[Error] Reading {snv_file}: {e}")
+            else:
+                print(f"[Warning] SNV file not found for {gene_id}")
+
+        if not collector:
+            print(f"[Warning] No SNVs found for pathway {self.id}")
+            return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
+
+        all_snvs = pd.concat(collector, ignore_index=True)
+
+        if not outpath:
+            outpath = pjoin(KEGG_PATHWAY_MUTATIONS_PATH, f"{self.id}.csv")
+
+        all_snvs.to_csv(outpath, index=index)
+        return all_snvs
+
+
+class KeggGene:
+    """Gene instance for KEGG pathway"""
+    """
+    CDS: 20536
+    miRNA: 1913
+    ncRNA: 1454
+    rRNA: 761
+    tRNA: 22
+    """
+
+    def __init__(self, kegg_id, default_init=True):
+        """Constructor for Protein"""
+        self.kegg_id, self.uniprot_id, self.ref_names = kegg_id, None, None
+        self.na_seq, self.aa_seq, self.chr, self.start, self.end = None, None, None, None, None
+        self.coding_type = None
+        self._dir_name = kegg_id.replace(':', '_')
+        self._directory = pjoin(KEGG_GENES_PATH, self._dir_name + '.pickle')
+        if os.path.exists(self._directory):
+            load_obj(self, self._directory, name=kegg_id)
+        elif default_init:
+            self._create_new_instance(kegg_id)
+
+    def __len__(self):
+        return len(self.aa_seq)
+
+    def _create_new_instance(self, kegg_id):
+        kegg_api = KeggApi()
+        self.uniprot_id = kegg_api.convert_gene_names(kegg_id)  # dict
+        self.aa_seq = kegg_api.gene_seq(kegg_id, 'aaseq')[kegg_id]
+        self.na_seq = kegg_api.gene_seq(kegg_id, 'ntseq')[kegg_id]
+        save_obj(self, self._directory)
+
+    def create_from_dict(self, data):
+        self.__dict__ = data
+        self._dir_name = self.kegg_id.replace(':', '_')
+        self._directory = pjoin(KEGG_GENES_PATH, self._dir_name + '.pickle')
+        save_obj(self, self._directory)
+
+    @property
+    def uid(self):
+        """
+        primary uniprot id
+        :return: str
+        """
+        if self.uniprot_id and 'primary' in self.uniprot_id:
+            return self.uniprot_id['primary']
+        return None
+
+    @property
+    def alias_uid(self):
+        """
+        alias uniprot ids does not return the main id
+        :return: set
+        """
+        if self.uniprot_id and 'secondary' in self.uniprot_id:
+            return set(self.uniprot_id['secondary'])
+        return set()
+
+    def length(self, seq='aa'):
+        """
+        :param seq: aa | na
+        :return: return length of amino acid or nucleic acid sequence
+        """
+        return len(self.aa_seq) if seq == 'aa' else len(self.na_seq)
+
+    def all_snvs(self, outpath='', index=False):
+        """
+        Creates a DataFrame of all nonsynonymous single nucleotide variants (SNVs) in the gene.
+
+        Notes:
+            - The last codon (3 nucleotides) is skipped (assumed to be the stop codon).
+            - If len(self.na_seq) % 3 != 0, we return empty DataFrame.
+
+        :param index: bool, include index column in DataFrame if True
+        :param outpath: str, if provided, saves the DataFrame as a CSV to this path
+        :return: pandas DataFrame with SNV data
+        """
+        # SKIP if the nucleic acid sequence is not a multiple of 3
+        # if len(self.na_seq) % 3 != 0:
+        #     print(f"Gene: {self.kegg_id} has {len(self.na_seq)} nucleotides, <!%3==0>!")
+        #     return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
+
+        # SKIP the sequence if it is not a CDS
+        if self.coding_type != "CDS":
+            print(f"Gene: {self.kegg_id} is a {self.coding_type}, skip.")
+            return pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
+
+        def read_in_chunks(seq, chunk_size=3):
+            """Yield only full codons (3 bases)."""
+            for i in range(0, len(seq) - (len(seq) % chunk_size), chunk_size):
+                yield seq[i:i + chunk_size]
+
+        row_data = lambda idx, ref_na, alt_na, ref_aa, alt_aa: \
+            ['-', idx, idx, ref_na, alt_na, self.uid, f'{ref_aa}{idx}{alt_aa}']
+
+        mutate_codon = lambda codon, idx, alt: codon[:idx] + alt + codon[idx + 1:]
+
+        df = pd.DataFrame(columns=FAMANALYSIS_COLUMNS)
+
+        for chunk, codon in enumerate(read_in_chunks(self.na_seq[:-3], chunk_size=CODON_LENGTH)):  # skip stop codon
+            codon = codon.lower()  # ensure lowercase for consistency with CODON_TRANSLATOR
+            if codon not in CODON_TRANSLATOR:
+                continue  # skip unknown or invalid codons
+            ref_aa = CODON_TRANSLATOR[codon]
+
+            for idx, ref_na in enumerate(codon):
+                if ref_na not in NA_CHANGE:
+                    continue  # skip invalid nucleotide
+                index = (CODON_LENGTH * chunk) + idx
+
+                for alt_na in NA_CHANGE[ref_na]:
+                    alt_codon = mutate_codon(codon, idx, alt_na)
+                    alt_codon = alt_codon.lower()
+                    if alt_codon not in CODON_TRANSLATOR:
+                        continue  # skip invalid mutated codons
+                    alt_aa = CODON_TRANSLATOR[alt_codon]
+                    if alt_aa == ref_aa:            # we include stop codon mutation in the meanwhile
+                        continue  # ignore synonymous and nonsense variants
+
+                    df.loc[len(df)] = row_data(index, ref_na, alt_na, ref_aa, alt_aa)
+
+        if outpath:
+            df.to_csv(outpath, index=index)
+
+        return df
+
+
+class ScoringCalculator:
     def __init__(self, model, alphabet, testing=False, clinvar_path=CLIN_VAR_PATH):
         """
         Initialize the calculator with the model and alphabet.
@@ -512,41 +702,58 @@ class WildtypeMarginalsCalculator:
             self.tokenizer = alphabet.get_batch_converter()
 
         self.clinvar_models = self.regression_over_clinvar(clinvar_path)
-        # TODO get new and much bigger ClinVar data from Gal
 
     @staticmethod
     def regression_over_clinvar(mutation_file: str):
         """
-        Train two logistic regression classifiers on ClinVar mutations:
-        one for ordered regions and one for disordered regions.
+        Train logistic regression classifiers on ClinVar mutations:
+        - one for ordered regions (is_disordered=0)
+        - one for disordered regions (is_disordered=1)
+        - one global model (all data pooled together)
         """
+        print("Training simple regressors over clinvar...")
+
         df = pd.read_csv(mutation_file)
-        df['is_disordered'] = df['is_disordered'].replace({'True': 1, 'False': 0})
-        df['ClinicalSignificance'] = df['ClinicalSignificance'].replace({
-            'Pathogenic': 1, 'Likely pathogenic': 1,
-            'Benign': 0, 'Likely benign': 0
-        })
-        df = df.dropna(subset=['ClinicalSignificance'])
+        df['is_disordered'] = df['is_disordered']
+        df = df.dropna(subset=['binary_label'])
 
         models = {}
+        esm_log_probs = 'wt_not_nadav_marginals_base_wt_score'
+
+        # ---- Train per-flag models ----
         for disorder_flag in [0, 1]:
             subset = df[df['is_disordered'] == disorder_flag].copy()
-            subset = subset.dropna(subset=['esm1b_log_prob'])
+            subset = subset.dropna(subset=[esm_log_probs])
 
             if subset.empty:
                 continue
 
             # remove extreme outliers
-            lower, upper = subset['esm1b_log_prob'].quantile([0.001, 0.999])
-            subset = subset[(subset['esm1b_log_prob'] >= lower) &
-                            (subset['esm1b_log_prob'] <= upper)]
+            lower, upper = subset[esm_log_probs].quantile([0.001, 0.999])
+            subset = subset[(subset[esm_log_probs] >= lower) &
+                            (subset[esm_log_probs] <= upper)]
 
-            X = subset[['esm1b_log_prob']].values
-            y = subset['ClinicalSignificance'].astype(int).values
+            X = subset[[esm_log_probs]].values
+            y = subset['binary_label'].astype(int).values
 
             model = LogisticRegression(solver="lbfgs", max_iter=1000)
             model.fit(X, y)
             models[disorder_flag] = model
+
+        # ---- Train global model (all data together) ----
+        all_subset = df.dropna(subset=[esm_log_probs]).copy()
+
+        if not all_subset.empty:
+            lower, upper = all_subset[esm_log_probs].quantile([0.001, 0.999])
+            all_subset = all_subset[(all_subset[esm_log_probs] >= lower) &
+                                    (all_subset[esm_log_probs] <= upper)]
+
+            X = all_subset[[esm_log_probs]].values
+            y = all_subset['binary_label'].astype(int).values
+
+            global_model = LogisticRegression(solver="lbfgs", max_iter=1000)
+            global_model.fit(X, y)
+            models["global"] = global_model
 
         return models
 
@@ -729,18 +936,18 @@ class WildtypeMarginalsCalculator:
 
     def normalize_scores_min_max(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Applies the specified normalization process to the 'score' column. After
+        Applies the specified normalization process to the 'esm_log_probs' column. After
         normalization, it assigns a score of 1 to any variants that resulted in an
         empty score (e.g., mutations to a stop codon).
 
         Args:
-            df (pd.DataFrame): The DataFrame with a 'score' column.
+            df (pd.DataFrame): The DataFrame with an 'esm_log_probs' column.
 
         Returns:
-            pd.DataFrame: DataFrame with an added 'normalized_score' column.
+            pd.DataFrame: DataFrame with an added 'esm_min_max_naive' column.
         """
         df_processed = df.copy()
-        scores = pd.to_numeric(df_processed['score'], errors='coerce')  # invalid parsing set as NaN
+        scores = pd.to_numeric(df_processed['esm_log_probs'], errors='coerce')  # invalid parsing set as NaN
 
         # 1. Identify and mask outliers from non-NaN scores
         outlier_indices = self.extreme_outliers_mad(scores.values, threshold=4.25)
@@ -753,7 +960,7 @@ class WildtypeMarginalsCalculator:
         # Handle case where there are no inliers to avoid errors
         if inliers.empty:
             # If no valid scores, can't normalize; return NaN or a default value
-            df_processed['normalized_score'] = np.nan
+            df_processed['esm_min_max_naive'] = np.nan
         else:
             vmin, vmax = np.nanmin(inliers), np.nanmax(inliers)
 
@@ -767,35 +974,63 @@ class WildtypeMarginalsCalculator:
             norm = norm.clip(lower=0.0, upper=1.0)
 
             # 4. Flip scores so 1 is most pathogenic
-            df_processed['normalized_score'] = 1.0 - norm
+            df_processed['esm_min_max_naive'] = 1.0 - norm
 
         # 5. For empty scores (e.g., stop codons), assign the max pathogenicity score of 1.
-        df_processed['normalized_score'] = df_processed['normalized_score'].fillna(1.0)
+        df_processed['esm_min_max_naive'] = df_processed['esm_min_max_naive'].fillna(1.0)
 
         return df_processed
 
     def scores_dis_ordered(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calibrate raw ESM scores into pathogenicity probabilities using
-        separate logistic regression models for ordered vs disordered regions.
+        separate logistic regression models for ordered vs disordered regions and one global
+        [trained without knowing disordered-related data].
         Vectorized implementation for efficiency.
         """
         df_processed = df.copy()
-        df_processed['esm_disorder_scoring'] = np.nan  # default NaN
 
-        for disorder_flag, model in self.clinvar_models.items():
-            mask = (df_processed['is_disordered'] == disorder_flag) & df_processed['score'].notna()
-            if mask.any():
-                scores = df_processed.loc[mask, 'score'].values.reshape(-1, 1)
-                probs = model.predict_proba(scores)[:, 1]
-                df_processed.loc[mask, 'esm_disorder_scoring'] = probs
+        # Initialize the two required columns with NaN
+        df_processed['clinvar_reg_dis_ordered_prob'] = np.nan
+        df_processed['clinvar_reg_global_prob'] = np.nan
+
+        # Process ORDERED regions (is_disordered == 0)
+        model_ordered = self.clinvar_models[0]
+        # Create a mask for rows that are ordered and have a score
+        mask_ordered = (df_processed['is_disordered'] == 0) & df_processed['esm_log_probs'].notna()
+        if mask_ordered.any():
+            scores = df_processed.loc[mask_ordered, 'esm_log_probs'].values.reshape(-1, 1)
+            probs = model_ordered.predict_proba(scores)[:, 1]
+            # Assign predictions to the combined column for these specific rows
+            df_processed.loc[mask_ordered, 'clinvar_reg_dis_ordered_prob'] = probs
+
+        # Process DISORDERED regions (is_disordered == 1)
+        model_disordered = self.clinvar_models[1]
+        # Create a mask for rows that are disordered and have a score
+        mask_disordered = (df_processed['is_disordered'] == 1) & df_processed['esm_log_probs'].notna()
+        if mask_disordered.any():
+            scores = df_processed.loc[mask_disordered, 'esm_log_probs'].values.reshape(-1, 1)
+            probs = model_disordered.predict_proba(scores)[:, 1]
+            # Assign predictions to the same combined column for these other rows
+            df_processed.loc[mask_disordered, 'clinvar_reg_dis_ordered_prob'] = probs
+
+        # --- Column 2: Predictions from the GLOBAL model ---
+
+        model_global = self.clinvar_models["global"]
+        # Create a mask for all rows with a score
+        mask_global = df_processed['esm_log_probs'].notna()
+        if mask_global.any():
+            scores = df_processed.loc[mask_global, 'esm_log_probs'].values.reshape(-1, 1)
+            probs = model_global.predict_proba(scores)[:, 1]
+            # Assign predictions to the global column
+            df_processed.loc[mask_global, 'clinvar_reg_global_prob'] = probs
 
         return df_processed
 
     def save_mutation_scores_to_csv_full(self, sequence: str, input_csv_path: str, output_csv_path: str):
         """
         Computes mutation scores for a single protein and adds them to an existing SNVs CSV file.
-        The scores are added to a new column named 'score'.
+        The scores are added to a new column named 'esm_log_probs'.
 
         Args:
             sequence: The wild-type amino acid sequence.
@@ -813,8 +1048,8 @@ class WildtypeMarginalsCalculator:
         except Exception as e:
             raise f"Error reading CSV file: {e}"
 
-        # Initialize a new 'score' column with NaN
-        df['score'] = float('nan')
+        # Initialize a new 'esm_log_probs' column with NaN
+        df['esm_log_probs'] = float('nan')
 
         # Iterate through the DataFrame and add scores
         for idx, row in df.iterrows():
@@ -826,14 +1061,14 @@ class WildtypeMarginalsCalculator:
                 mut_aa = variant[-1]  # Extract mutant amino acid
 
                 if mut_aa == STOP_AA:   # stop codon, so score is -inf...
-                    df.at[idx, 'score'] = None      # placeholder
+                    df.at[idx, 'esm_log_probs'] = None      # placeholder
                     continue
 
                 mut_idx = AA_TO_INDEX_ESM.get(mut_aa)
                 if mut_idx is None or aa_pos >= score_matrix.shape[0]:    # if more sequence positions than scores calculated
                     continue
 
-                df.at[idx, 'score'] = score_matrix[aa_pos, mut_idx].item()
+                df.at[idx, 'esm_log_probs'] = score_matrix[aa_pos, mut_idx].item()
             except Exception as e:
                 print(f"[Warning] Could not assign score for row {idx} in {input_csv_path}: {e}")
 
@@ -879,7 +1114,7 @@ class DisorderPredict:
             for gene_id in tqdm(all_genes, desc="Loading and cleaning gene sequences"):
                 try:
                     gene = KeggGene(gene_id)
-                    if gene.aa_seq:
+                    if gene.aa_seq and gene.coding_type == "CDS":
                         # Clean sequence based on metapredict V3 rules
                         processed_seq = gene.aa_seq.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
                         processed_seq = processed_seq.replace(' ', '').replace('*', '').replace('-', '')
@@ -904,7 +1139,7 @@ class DisorderPredict:
         """
         print(f"\n\n  Predicting disorder for {len(sequences_to_predict)} sequences...")
         try:
-            disorder_predictions = meta.predict_disorder_batch(sequences_to_predict)
+            disorder_predictions = meta.predict_disorder(sequences_to_predict)
 
             # Step 3: Loop through predictions, load corresponding SNV file, merge, and save.
             for gene_id, result_list in tqdm(disorder_predictions.items(),
