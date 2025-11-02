@@ -103,6 +103,7 @@ REFERENCE_SEQ_COL = 'ReferenceSeq'
 UNIPROT_ID_COL = 'UniprotId'
 PROTEIN_NAME_COL = 'Protein'
 VARIANT_COL = 'Variant'
+KEGG_COL = 'KeggId'
 
 #  KEGG
 

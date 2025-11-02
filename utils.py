@@ -17,7 +17,7 @@ import glob
 from torch.nn.functional import log_softmax
 import torch
 import tempfile
-
+import csv
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
@@ -90,6 +90,12 @@ def create_session(header, retries=5, wait_time=0.5, status_forcelist=None):
 
     s.mount(header, HTTPAdapter(max_retries=retries))
     return s
+
+
+def extract_accession(uid):
+    if "|" in uid:
+        return uid.split("|")[1]  # get the middle part
+    return uid
 
 
 def safe_get_request(session, url, timeout=TIMEOUT, warning_msg='connection failed', return_on_failure=None):
@@ -166,6 +172,15 @@ def safe_post_request(session, url, timeout, verbose_level, warning_msg='connect
 
 def kegg_genes_in_dataset():
     return {os.path.basename(path)[:-7].replace('_', ':') for path in glob.glob(pjoin(KEGG_GENES_PATH, '*'))}
+
+
+def open_df_pickle(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            dfs = pickle.load(f)
+            print(f"Opened existing {path}")
+            return dfs
+    return {}
 
 
 class UniprotApi:
@@ -646,6 +661,17 @@ class KeggApi:
         gene_data['kegg_id'] = kegg_id
         return {kegg_id: gene_data}
 
+    @staticmethod
+    def hugo_to_kegg_hsa(hugo):
+        url = f"https://rest.kegg.jp/find/genes/{hugo}"
+        r = requests.get(url)
+        r.raise_for_status()
+        hsa_ids = []
+        for line in r.text.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) == 2 and parts[0].startswith("hsa:"):
+                hsa_ids.append(parts[0])
+        return hsa_ids
 
 
 class WildtypeMarginalsCalculator:
