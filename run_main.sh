@@ -6,9 +6,7 @@
 #SBATCH --mem=32G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
-
-
-#######################################################################SBATCH --gres=gg:g4:1
+#SBATCH --gres=gg:g4:1
 
 echo "Script Starting..."
 

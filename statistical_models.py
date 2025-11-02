@@ -148,7 +148,7 @@ class BackgroundModel:
         # we actually included. This ensures that the final mixed distribution is a
         # proper probability distribution (integrates to 1).
         if total_weight_used > 0:
-            joint_distribution /= total_weight_used
+            joint_distribution /= total_weight_used     # TODO the weight is the same all the time - the sum of the 12 relevant cells...
 
         return joint_distribution, bin_edges
 
