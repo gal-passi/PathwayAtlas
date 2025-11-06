@@ -718,6 +718,8 @@ class ScoringCalculator:
         - one for disordered regions (is_disordered=1)
         - one global model (all data pooled together)
         """
+        # TODO train the model once, save it, and if exists next time - load
+        
         print("Training simple regressors over clinvar...")
 
         df = pd.read_csv(mutation_file)
@@ -1091,6 +1093,17 @@ class ScoringCalculator:
     def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
         """In place alias of save_mutation_scores_to_csv_full."""
         return self.save_mutation_scores_to_csv_full(sequence, csv_path, csv_path)
+        
+    ### This part is for handeling the special case of the cancer-CSVs
+    #TODO:
+    # def handle_cancer_row(row):
+    #     """
+    #     Takes a row with UniprotId and RefrenceSeq, and produce all scoring types:
+    #     disorder_score,is_disordered,esm_log_probs,clinvar_reg_dis_ordered_prob,clinvar_reg_global_prob
+    #     """
+    
+    # def handle_cancer_csv(file_name):
+    
 
 
 

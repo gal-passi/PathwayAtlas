@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=main
+#SBATCH --job-name=emb_cancer
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=12:00:00
-#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --mem=16G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 #SBATCH --gres=gg:g4:1
@@ -31,10 +31,23 @@ cd /cs/labs/dina/ophirmil12/PathwayAtlas/
 # export esm model path to local venv
 export TORCH_HOME=./torch_cache
 
+
+
+
+
+
 # run code (output in slurm .out file)
-python -u main.py
+#python -u embed_cancer_seqs.py       ## need gpu
+#python -u disorder_score_cancer.py                              ####### PY FILE NAME #######
+#
+
+
+
+
 
 # give access to bew files added to data
-#chmod -R g+w ./data
+chmod -R g+w ./data
+
+echo "Script Finished."
 
 ### #SBATCH --gres=gg:g4:1      # for GPU [g0 or g4, g10... we have access to g4 only]
