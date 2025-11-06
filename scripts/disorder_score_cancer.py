@@ -1,56 +1,86 @@
+
+
+
+
+
+    # TODO I suspect that the second line is shortening the sequence, thus giving shorter prediction vector,
+    #  and causing mismatch of the disorder scoring in the "print(f"\ndisorder: position {position} out of {len(disorder_scores)}")" error.
+    #  This version is putting np.nan in laces that dont have a score
+
+
 import os
 import pandas as pd
 from tqdm import tqdm
 from metapredict import meta
 import numpy as np
-from definitions import DISORDERED_THRESHOLD
 
 
-
-def get_disorder_scores(sequence):
+def get_aligned_disorder_scores(sequence):
     """
-    Calculates the disorder scores for a single protein sequence.
-    
+    Calculates disorder scores and aligns them with the original protein sequence.
+
     Args:
-        sequence (str): The amino acid sequence of the protein.
+        sequence (str): The amino acid sequence of the protein, which may contain
+                        non-standard characters or gaps.
 
     Returns:
-        numpy.ndarray: An array of disorder scores for each amino acid, or None if input is invalid.
+        tuple: A tuple containing:
+               - processed_seq (str): The sequence after metapredict-like cleaning.
+               - aligned_scores (numpy.ndarray): An array of disorder scores with the
+                 same length as the original sequence, with np.nan at positions
+                 corresponding to removed characters.
+               Returns (None, None) if the input is invalid.
     """
-    # 1. Ensure sequence data is a valid string
     if not isinstance(sequence, str) or not sequence:
-        return None
-
-    # 2. Clean up the protein sequence
-    # Replace non-standard amino acid characters and remove whitespace/symbols
-    processed_seq = sequence.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
-    processed_seq = processed_seq.replace(' ', '').replace('*', '').replace('-', '')
-
-    if not processed_seq:
         return None, None
 
-    # 3. Predict disorder for the entire sequence
-    # meta.predict_disorder returns a numpy array of scores for each amino acid
+    # 1. Prepare the sequence for metapredict and create a map
+    original_len = len(sequence)
+    aligned_scores = np.full(original_len, np.nan)
+
+    # These are the characters metapredict will process
+    valid_chars = "ACDEFGHIKLMNPQRSTVWY"
+
+    # This is the sequence metapredict will effectively see.
+    # Non-standard amino acids are replaced as per metapredict's known behavior.
+    processed_seq_list = []
+    original_indices = []
+
+    temp_seq = sequence.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
+
+    for i, char in enumerate(temp_seq):
+        if char in valid_chars:
+            processed_seq_list.append(char)
+            original_indices.append(i)
+
+    processed_seq = "".join(processed_seq_list)
+
+    if not processed_seq:
+        return sequence, aligned_scores  # Return the original sequence and an array of NaNs
+
+    # 2. Predict disorder for the cleaned sequence
     disorder_scores = meta.predict_disorder(processed_seq)
 
-    return processed_seq, disorder_scores
+    # 3. Use the map to align scores with the original sequence
+    for idx, score in zip(original_indices, disorder_scores):
+        aligned_scores[idx] = score
+
+    return sequence, aligned_scores
 
 
 def main():
     """
     Main function to process cancer data files, calculate protein disorder scores,
-    and save them to individual files.
+    and save them to individual files, ensuring alignment with the original sequence.
     """
     # --- Setup ---
     disorder_scores_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/disorder_scores"
     cancer_csv_dir = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
 
-    # Create the output directory if it doesn't already exist
     os.makedirs(disorder_scores_dir, exist_ok=True)
 
     # --- Efficiently get the list of already processed IDs ---
     print("Finding existing disorder score files...")
-    # We assume the file is named 'UniprotId.txt' and strip the extension
     existing_ids = {f.replace('.txt', '') for f in os.listdir(disorder_scores_dir) if f.endswith('.txt')}
     print(f"Found {len(existing_ids)} existing score files.")
 
@@ -62,70 +92,49 @@ def main():
         return
 
     # --- Main Processing Loop ---
-    # Use tqdm on the outer loop to track progress through the cancer files
     for file_name in tqdm(cancer_csv_files, desc="Processing Cancer Files"):
         file_path = os.path.join(cancer_csv_dir, file_name)
 
-        # 1. Load Data Safely
         try:
             df = pd.read_csv(file_path, low_memory=False)
         except Exception as e:
             print(f"Could not read or parse {file_name}. Error: {e}")
             continue
 
-        # 2. Validate DataFrame Structure
         required_cols = ["ReferenceSeq", "UniprotId"]
         if not all(col in df.columns for col in required_cols):
-            # print(f"Skipping {file_name}: Missing one or more required columns.")
             continue
-        
-        # 3. Efficiently Filter the DataFrame
-        # Condition 1: The sequence must be a valid, non-empty string.
-        valid_seq_mask = df['ReferenceSeq'].notna() & (df['ReferenceSeq'] != '')
-        
-        # Condition 2: The Uniprot ID must not be null.
-        valid_id_mask = df['UniprotId'].notna()
 
+        valid_seq_mask = df['ReferenceSeq'].notna() & (df['ReferenceSeq'] != '')
+        valid_id_mask = df['UniprotId'].notna()
         df_filtered = df[valid_seq_mask & valid_id_mask]
 
         if df_filtered.empty:
             continue
 
-        # Condition 3: The Uniprot ID must NOT already be in our set of processed IDs.
         unprocessed_mask = ~df_filtered['UniprotId'].isin(existing_ids)
         df_to_process = df_filtered[unprocessed_mask].drop_duplicates(subset=['UniprotId'])
 
-
-        # 4. Process and Save Scores for Only the Filtered Rows
-        # .itertuples() is significantly faster than .iterrows()
         for row in df_to_process.itertuples(index=False):
             uniprot_id = row.UniprotId
             sequence = row.ReferenceSeq
 
             try:
-                # Calculate the disorder scores for the sequence
-                processed_seq, disorder_scores = get_disorder_scores(sequence)
+                original_sequence, aligned_scores = get_aligned_disorder_scores(sequence)
 
-                if disorder_scores is None:
-                    # print(f"Skipping {uniprot_id} from {file_name}: Invalid sequence after cleaning.")
+                if aligned_scores is None:
                     continue
 
-                # Define the output path for the scores file
                 output_path = os.path.join(disorder_scores_dir, f"{uniprot_id}.txt")
 
-                # Save the scores to a 2-line text file
                 with open(output_path, 'w') as f:
-                    f.write(processed_seq + '\n')
-                    # Convert numpy array to a space-separated string and write to file
-                    f.write(' '.join(map(str, disorder_scores)) + '\n')
+                    f.write(original_sequence + '\n')
+                    # Convert numpy array to a space-separated string, representing NaNs as 'nan'
+                    f.write(' '.join(map(str, aligned_scores)) + '\n')
 
-                # IMPORTANT: Add the newly processed ID to our live set.
-                # This prevents reprocessing it if it appears again in a later file
-                # during the same run.
                 existing_ids.add(uniprot_id)
 
             except Exception as e:
-                # If a single protein fails, log the error and continue with the rest.
                 print(f"Error processing {uniprot_id} from {file_name}: {e}")
 
     print("\nProcessing complete.")

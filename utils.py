@@ -1,6 +1,7 @@
 import os
+import time
 import warnings
-from typing import Union, List, Dict, Optional
+from typing import Union, List
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -17,10 +18,6 @@ import copy
 import glob
 from torch.nn.functional import log_softmax
 import torch
-
-import metapredict as meta
-
-
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
@@ -711,14 +708,27 @@ class ScoringCalculator:
         self.clinvar_models = self.regression_over_clinvar(clinvar_path)
 
     @staticmethod
-    def regression_over_clinvar(mutation_file: str):
+    def regression_over_clinvar(mutation_file: str, models_path: str = None):
         """
         Train logistic regression classifiers on ClinVar mutations:
         - one for ordered regions (is_disordered=0)
         - one for disordered regions (is_disordered=1)
         - one global model (all data pooled together)
+        models_path (str, optional): Full path to save/load the models pickle file.
         """
-        # TODO train the model once, save it, and if exists next time - load
+        # Define the default path for the cached models if not provided
+        if models_path is None:
+            # Ensure the directory exists before creating the file path
+            if not os.path.exists(CLINVAR_MODELS_PATH):
+                os.makedirs(CLINVAR_MODELS_PATH, exist_ok=True)
+            models_path = os.path.join(CLINVAR_MODELS_PATH, 'clinvar_log_reg_models.pkl')
+
+        # --- Check if models are already trained and saved ---
+        if os.path.exists(models_path):
+            print(f"Loading pre-trained ClinVar regression models from: {models_path}")
+            with open(models_path, 'rb') as f:
+                models = pickle.load(f)
+            return models
         
         print("Training simple regressors over clinvar...")
 
@@ -763,6 +773,11 @@ class ScoringCalculator:
             global_model = LogisticRegression(solver="lbfgs", max_iter=1000)
             global_model.fit(X, y)
             models["global"] = global_model
+
+        # --- Save the newly trained models to the specified path ---
+        print(f"Saving trained models to: {models_path}")
+        with open(models_path, 'wb') as f:
+            pickle.dump(models, f)
 
         return models
 
@@ -1091,108 +1106,179 @@ class ScoringCalculator:
         df_normalized.to_csv(output_csv_path, index=False)
 
     def save_mutation_scores_to_csv(self, sequence: str, csv_path: str):
-        """In place alias of save_mutation_scores_to_csv_full."""
+        """In place alias of save_mutation_scores_to_csv_full.
+            This is for background model CSVs."""
         return self.save_mutation_scores_to_csv_full(sequence, csv_path, csv_path)
         
-    ### This part is for handeling the special case of the cancer-CSVs
-    #TODO:
-    # def handle_cancer_row(row):
-    #     """
-    #     Takes a row with UniprotId and RefrenceSeq, and produce all scoring types:
-    #     disorder_score,is_disordered,esm_log_probs,clinvar_reg_dis_ordered_prob,clinvar_reg_global_prob
-    #     """
-    
-    # def handle_cancer_csv(file_name):
-    
-
-
-
-
-class DisorderPredict:
-    def __init__(self, kegg):
-        self.kegg = kegg
-
-    def load_sequences_to_predict(self, sequences_pickle_file: str, recalc: bool=False) -> Optional[Dict[str, str]]:
+    ### This part is for handling the special case of the cancer-CSVs
+    def handle_cancer_row(self, row: pd.Series) -> pd.Series:
         """
-        Load pre-processed sequences from a pickle file or process them from scratch.
-
-        Args:
-            sequences_pickle_file (str): Path to pickle file.
-            recalc (bool): Whether to force re-processing.
-
-        Returns:
-            Optional[Dict[str, str]]: Mapping from gene_id -> cleaned amino acid sequence.
+        Takes a row with UniprotId and RefrenceSeq, and produce all scoring types:
+        disorder_score,is_disordered,esm_log_probs,clinvar_reg_dis_ordered_prob,clinvar_reg_global_prob
         """
-        if os.path.exists(sequences_pickle_file) and not recalc:
-            print(f"Loading pre-processed sequences from cache: {sequences_pickle_file}")
-            with open(sequences_pickle_file, 'rb') as f:
-                return pickle.load(f)
-        else:
-            print("Processing sequences from scratch (or recalc=True)...")
-            all_genes = list(self.kegg.get_all_genes().keys())
-            sequences_to_predict = {}
-            for gene_id in tqdm(all_genes, desc="Loading and cleaning gene sequences"):
-                try:
-                    gene = KeggGene(gene_id)
-                    if gene.aa_seq and gene.coding_type == "CDS":
-                        # Clean sequence based on metapredict V3 rules
-                        processed_seq = gene.aa_seq.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
-                        processed_seq = processed_seq.replace(' ', '').replace('*', '').replace('-', '')
-                        if processed_seq:
-                            sequences_to_predict[gene_id] = processed_seq
-                except Exception as e:
-                    print(f"[Error] Loading gene {gene_id}: {e}")
-
-            print(f"Saving {len(sequences_to_predict)} processed sequences to cache: {sequences_pickle_file}")
-            with open(sequences_pickle_file, 'wb') as f:
-                pickle.dump(sequences_to_predict, f)
-
-            return sequences_to_predict
-
-    @staticmethod
-    def predict(sequences_to_predict: Dict[str, str]) -> None:
-        """
-        Predict disorder for the given sequences and merge results into SNV CSV files.
-
-        Args:
-            sequences_to_predict (Dict[str, str]): Mapping from gene_id -> amino acid sequence.
-        """
-        print(f"\n\n  Predicting disorder for {len(sequences_to_predict)} sequences...")
+        output_columns = ['disorder_score', 'is_disordered', 'esm_log_probs',
+                          'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob']
+        results = pd.Series([np.nan] * len(output_columns), index=output_columns)
         try:
-            disorder_predictions = meta.predict_disorder(sequences_to_predict)
+            uniprot_id = row['UniprotId']
+            mutation = row['Variant']
 
-            # Step 3: Loop through predictions, load corresponding SNV file, merge, and save.
-            for gene_id, result_list in tqdm(disorder_predictions.items(),
-                                             desc="Merging disorder scores into SNV files"):
-                snv_file_path = os.path.join(KEGG_PATHWAY_MUTATIONS_PATH, f"{gene_id}.csv")
-                if not os.path.exists(snv_file_path):
-                    continue
-                snv_df = pd.read_csv(snv_file_path)
+            # 1. Parse the mutation string (e.g., 'p.V600E')
+            # This regex captures the wild type AA, position, and mutant AA.
+            match = re.match(r'(?:p\.)?([A-Z*])(\d+)([A-Z*])', str(mutation))
+            if not match or not uniprot_id or uniprot_id == "nan":
+                print(f"\nNo match to {mutation} or UniprotId: {uniprot_id} problem.")
+                return results  # Return NaNs if the format is not recognized
 
-                scores = result_list[1]  # scores is a np array
+            wt_aa, pos_str, mut_aa = match.groups()
+            position = int(pos_str)  # 1-based position
 
-                # Create a DataFrame from the disorder prediction list to act as a lookup table
-                disorder_df = pd.DataFrame({
-                    'amino_acid_index': range(len(scores)),
-                    'disorder_score': scores
-                })
+            # 2. Load and extract the disorder score
+            disorder_file = os.path.join(CANCER_READY_DISORDER_PATH, f"{uniprot_id}.txt")
+            if not os.path.exists(disorder_file):
+                print(f"\nCould not find: {disorder_file}")
+                return results
 
-                # Create the 'amino_acid_index' in the SNV DataFrame by dividing the nucleotide 'Start' position by 3.
-                # This correctly maps the nucleotide position to the 0-indexed amino acid position.
-                snv_df['amino_acid_index'] = snv_df['Start'] // 3
+            with open(disorder_file, 'r') as f:
+                lines = f.readlines()
+                if len(lines) < 2:
+                    print(f"\nProblem in {uniprot_id} - less than 2 lines in disorder file")
+                    return results
+                scores_str = lines[1].strip().split()
+                disorder_scores = [np.nan if s == 'nan' else float(s) for s in scores_str]
 
-                # Merge the SNV data with the disorder scores
-                merged_df = pd.merge(snv_df, disorder_df, on='amino_acid_index', how='left')
+            # Use 0-based indexing for the list
+            if position - 1 < len(disorder_scores):
+                disorder_score = disorder_scores[position - 1]
+                if np.isnan(disorder_score):
+                    print(f"\n{uniprot_id} - NaN value for position {position} in disorder file")
+                    return results
+                is_disordered = 1 if disorder_score > DISORDERED_THRESHOLD else 0
+            else:
+                print(f"Disorder: position {position} out of {len(disorder_scores)}, {uniprot_id}")
+                return results  # Position is out of bounds
 
-                merged_df['disorder_score'] = pd.to_numeric(merged_df['disorder_score'], errors='coerce')
-                merged_df['disorder_score'] = merged_df['disorder_score'].fillna(0)  # NA -> ordered
+            # 3. Load and extract the ESM log probability
+            esm_file = os.path.join(CANCER_READY_EMBEDDINGS_PATH, f"{uniprot_id}.pt")
+            if not os.path.exists(esm_file):
+                print(f"\nCould not find: {esm_file}")
+                return results
 
-                # Create the binary 'is_disordered' column
-                merged_df['is_disordered'] = (merged_df['disorder_score'] > DISORDERED_THRESHOLD).astype(int)
+            esm_tensor = torch.load(esm_file, map_location=torch.device('cpu'))  # Expected format: [Length, 20]
 
-                # Overwrite the original SNV file with the new, enriched data
-                merged_df.to_csv(snv_file_path, index=False)
+            mut_aa_idx = AA_TO_INDEX_ESM.get(mut_aa)
+
+            # Handle stop codons or invalid mutant amino acids
+            if mut_aa_idx is None or mut_aa == STOP_AA:
+                esm_log_prob = np.nan
+            # Check if the position is valid for the tensor
+            elif position - 1 < esm_tensor.shape[0]:
+                # Index as [amino_acid, position]
+                esm_log_prob = esm_tensor[position - 1, mut_aa_idx].item()
+            else:
+                print(f"Emb: position {position} out of {esm_tensor.shape[0]}, {uniprot_id}")
+                return results  # Position is out of bounds
+
+            # 4. Calibrate scores using the pre-trained regression models
+            temp_df = pd.DataFrame([{
+                'esm_log_probs': esm_log_prob,
+                'is_disordered': is_disordered
+            }])
+            calibrated_df = self.scores_dis_ordered(temp_df)
+            calibrated_results = calibrated_df.iloc[0]
+
+            # 5. Assemble the final results
+            results['disorder_score'] = disorder_score
+            results['is_disordered'] = is_disordered
+            results['esm_log_probs'] = esm_log_prob
+            results['clinvar_reg_dis_ordered_prob'] = calibrated_results['clinvar_reg_dis_ordered_prob']
+            results['clinvar_reg_global_prob'] = calibrated_results['clinvar_reg_global_prob']
 
         except Exception as e:
-            print(f"[Error] Failed during batch disorder prediction or file merging: {e}")
+            # In case of any error during processing, return the series of NaNs
+            print(f"row exception: {e}")
+
+        return results
+
+    def handle_cancer_csv_full(self, input_csv_path: str, output_csv_path: str,
+                               available_ids, recalc_scores=False):
+        """
+        EFFICIENT VERSION: Reads a CSV, pre-filters for mutations with available data,
+        calculates scores, and saves the enriched DataFrame. Reports total time taken.
+        """
+        file_basename = os.path.basename(input_csv_path)
+        print(f"--- Starting Cancer CSV Processing: {file_basename} ---")
+        print(f"Loading mutation data from {file_basename}...")
+        try:
+            df = pd.read_csv(input_csv_path)
+        except FileNotFoundError:
+            print(f"[Error] Input file not found: {input_csv_path}")
+            return
+
+        required_columns = ['UniprotId', 'Variant']
+
+        if not all(col in df.columns for col in required_columns):
+            missing_cols = [col for col in required_columns if col not in df.columns]
+            print(f"  -> Skipping '{file_basename}': Missing required columns: {missing_cols}")
+            return  # Stop processing this file and move to the next one
+
+        #### This part is for skipping files that are ready
+        # if it has all the scoring columns already - return
+        if not recalc_scores:
+            scoring_columns = [
+                'disorder_score', 'is_disordered', 'esm_log_probs',
+                'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob'
+            ]
+            if set(scoring_columns).issubset(df.columns):
+                print(f"  -> Skipping '{file_basename}': All scoring columns already exist.")
+                return  # Stop processing this file and move to the next one
+
+        mask = df['UniprotId'].notna() & df['UniprotId'].isin(available_ids)
+        processable_df = df[mask].copy()
+        unprocessed_df = df[~mask]
+
+        if processable_df.empty:
+            print("No processable rows found in the CSV. No changes made.")
+            # Ensure new columns exist even if no rows are processed
+            for col in ['disorder_score', 'is_disordered', 'esm_log_probs', 'clinvar_reg_dis_ordered_prob',
+                        'clinvar_reg_global_prob']:
+                if col not in df.columns:
+                    df[col] = np.nan
+            df.to_csv(output_csv_path, index=False)
+            return df
+
+        print(f"Scoring {len(processable_df)} out of {len(df)} total rows...")
+
+        start_time = time.time()
+
+        # Use the standard pandas 'apply'
+        scores_df = processable_df.apply(self.handle_cancer_row, axis=1)
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+
+        # Merge scores back into the main dataframe
+        for col in scores_df.columns:
+            df.loc[processable_df.index, col] = scores_df[col]
+
+        print(f"Saving scored data to {output_csv_path}...")
+        df.to_csv(output_csv_path, index=False)
+
+        # --- REPORTING MODIFICATION ---
+        print(f"\nSuccessfully scored {len(processable_df)} rows.")
+        print(f"Skipped {len(unprocessed_df)} rows due to missing UniprotID or data files.")
+        print(f"Total scoring time: {elapsed_time:.2f} seconds.\n")
+
+        return df
+
+    def handle_cancer_csv(self, input_csv_path: str, available_ids, recalc_scores=False):
+        """
+        Reads a CSV of cancer mutations, calculates disorder and pathogenicity scores for each row,
+        and saves the enriched DataFrame to the same file.
+        For full control, please see handle_cancer_csv_full.
+        """
+        return self.handle_cancer_csv_full(input_csv_path, input_csv_path, available_ids, recalc_scores)
+
+
+
 

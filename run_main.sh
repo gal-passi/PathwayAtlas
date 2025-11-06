@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=emb_cancer
+#SBATCH --job-name=cancer_scoring
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=24:00:00
-#SBATCH --mem=16G
+#SBATCH --time=72:00:00
+#SBATCH --mem=20G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
-#SBATCH --gres=gg:g4:1
+###########SBATCH --gres=gg:g4:1
 
 echo "Script Starting..."
 
@@ -16,8 +16,6 @@ source /cs/labs/dina/ophirmil12/miniforge3/etc/profile.d/conda.sh
 
 # Activate your specific Conda environment
 conda activate project_env
-
-
 
 # go to PathwayAtlas folder [local git folder - cd .]
 cd /cs/labs/dina/ophirmil12/PathwayAtlas/
@@ -36,18 +34,16 @@ export TORCH_HOME=./torch_cache
 
 
 
-# run code (output in slurm .out file)
-#python -u embed_cancer_seqs.py       ## need gpu
-#python -u disorder_score_cancer.py                              ####### PY FILE NAME #######
-#
+# run code (output in slurm .out file)                              ####### PY FILE NAME #######
+#python -u ./scripts/embed_cancer_seqs.py       ## need gpu
+#python -u ./scripts/disorder_score_cancer.py
+python -u ./scripts/fill_cancer_files.py
 
 
 
 
 
 # give access to bew files added to data
-chmod -R g+w ./data
+############################################################## chmod -R g+w ./data
 
 echo "Script Finished."
-
-### #SBATCH --gres=gg:g4:1      # for GPU [g0 or g4, g10... we have access to g4 only]

@@ -1,4 +1,4 @@
-from statistical_models import BackgroundModel
+from disorder_predictor import DisorderPredict
 from utils import *
 
 import os

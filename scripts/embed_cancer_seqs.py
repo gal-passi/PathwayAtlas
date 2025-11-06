@@ -18,7 +18,7 @@ import torch
 
 def main():
     # --- Setup ---
-    working_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas"
+    working_dir = "/"
     cancer_csv_dir = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
     embedding_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/emb"
 
