@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import os
 import pickle
-
+from scipy.stats import wasserstein_distance
 
 
 class GMM:
@@ -295,6 +295,38 @@ class DistributionDistances:
         # 3. The KL divergence is the expectation E[log(P(x)) - log(Q(x))]
         return np.mean(log_p_p - log_q_p)
 
+    @staticmethod
+    def wasserstein_from_hist(counts1: np.ndarray, counts2: np.ndarray, bin_edges: np.ndarray) -> float:
+        """
+        Calculates the 1-Wasserstein distance (Earth Mover's Distance) between
+        two pre-computed histograms.
+
+        This metric represents the minimum "cost" to transform one distribution
+        into the other, where cost is the amount of probability mass moved
+        multiplied by the distance it is moved.
+
+        Args:
+            counts1 (np.ndarray): An array of bin densities for the first histogram.
+            counts2 (np.ndarray): An array of bin densities for the second histogram.
+            bin_edges (np.ndarray): The edges of the histogram bins.
+
+        Returns:
+            float: The calculated 1-Wasserstein distance.
+        """
+        if len(counts1) != len(counts2):
+            raise ValueError("Input histogram count arrays must have the same length.")
+
+        # Calculate the center of each bin to represent the location of the mass
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        # SciPy's function calculates the distance between two 1D distributions.
+        # It takes the locations (values) and their respective weights (probabilities).
+        return wasserstein_distance(u_values=bin_centers, v_values=bin_centers,
+                                    u_weights=counts1, v_weights=counts2)
+
+
+
+
 
 class CancerPathwayScoring:
     """
@@ -453,26 +485,17 @@ class CancerPathwayScoring:
 
         return joint_distribution, bin_edges
 
-    def calculate_distance_gmm_kl_d(self, background_scores: dict, cancer_scores: dict,
-                                    score_type: str = "clinvar_reg_global_prob") -> float:
+    def get_bins_of_distributions_ready(self, background_scores: dict, cancer_scores: dict,
+                                        score_type: str = "clinvar_reg_global_prob"):
         """
-        Calculates KL-Divergence between background and cancer score distributions
-        by modeling them with GMMs. The background distribution is weighted by
-        PSSM, while the cancer distribution is an unweighted, direct observation.
-
-        Parameters
-        ----------
-        background_scores : dict
-            Nested dictionary of background scores.
-        cancer_scores : dict
-            Nested dictionary of cancer scores.
-        score_type : str
-            The score type to compare.
+        A helper method to generate the background and cancer distributions.
+        This centralizes the distribution creation logic to be used by multiple
+        distance calculation methods.
 
         Returns
         -------
-        float or None
-            The calculated KL-Divergence, or None if calculation fails.
+        tuple
+            (background_distribution, bin_edges, cancer_distribution)
         """
         # 1. Create a PSSM-weighted joint distribution for the background model
         bg_dist, bin_edges = self.create_joint_distribution(
@@ -484,11 +507,24 @@ class CancerPathwayScoring:
             cancer_scores, self.pssm, score_type=score_type, bins=bin_edges, use_pssm=False
         )
 
+        return bg_dist, bin_edges, cancer_dist
+
+    def calculate_distance_gmm_kl_d(self, background_scores: dict, cancer_scores: dict,
+                                    score_type: str = "clinvar_reg_global_prob") -> float:
+        """
+        Calculates KL-Divergence between background and cancer score distributions
+        by modeling them with GMMs.
+        """
+        # 1. Get the distributions from the helper method
+        bg_dist, bin_edges, cancer_dist = self.get_bins_of_distributions_ready(
+            background_scores, cancer_scores, score_type
+        )
+
         if np.sum(bg_dist) == 0 or np.sum(cancer_dist) == 0:
             print(f"Warning: Empty distribution for '{score_type}'. Cannot calculate distance.")
             return None
 
-        # 3. Fit GMM to each distribution
+        # 2. Fit GMM to each distribution
         gmm_bg, _ = self.gmm_fitter.GMM_the_distribution(bg_dist, bin_edges)
         gmm_cancer, _ = self.gmm_fitter.GMM_the_distribution(cancer_dist, bin_edges)
 
@@ -496,59 +532,94 @@ class CancerPathwayScoring:
             print(f"Warning: GMM fitting failed for '{score_type}'.")
             return None
 
-        # 4. Calculate KL-Divergence between the fitted models
+        # 3. Calculate KL-Divergence between the fitted models
         kl_divergence = DistributionDistances.kl_divergence_from_gmms(gmm_bg, gmm_cancer)
 
         return kl_divergence
 
-    """
-    Run example:
-    # Assuming the 'CancerPathwayScoring' class and its dependencies 
-    # (GMM, DistributionDistances, definitions.py) are in your project.
-    
-    from statistical_models import CancerPathwayScoring 
-    
-    # 1. Instantiate the class with the paths to your files.
-    #    Replace these paths with the actual locations of your files.
-    pathway_file = "./data/kegg/pathways/objects/hsa00280.pickle"
-    cancer_file = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers/acc_mutations.csv"
-    
-    analyzer = CancerPathwayScoring(pathway_file, cancer_file)
-    
-    # 2. Collect the background scores from all genes in the pathway.
-    print(f"Step 1: Collecting background scores for pathway '{pathway_file}'...")
-    background_scores = analyzer.get_pathway_scores_background()
-    
-    # 3. Collect the cancer-specific scores for genes in that same pathway.
-    print(f"Step 2: Collecting cancer-specific scores from '{cancer_file}'...")
-    cancer_scores = analyzer.get_cancer_pathway_scores()
-    
-    # 4. Proceed only if both datasets have scores to compare.
-    if background_scores and cancer_scores:
-        # We will use the 'clinvar_reg_global_prob' score for this example.
-        score_to_analyze = 'clinvar_reg_global_prob'
-        
-        print(f"\nStep 3: Calculating KL-Divergence using '{score_to_analyze}' scores...")
-        
-        # Calculate the statistical distance (KL-Divergence) between the two distributions.
-        kl_divergence = analyzer.calculate_distance_gmm_kl_d(
-            background_scores,
-            cancer_scores,
-            score_type=score_to_analyze
+    def calculate_distance_wasserstein(self, background_scores: dict, cancer_scores: dict,
+                                       score_type: str = "clinvar_reg_global_prob") -> float:
+        """
+        Calculates the 1-Wasserstein distance between the background and cancer
+        score distributions directly from their histograms.
+        """
+        # 1. Get the distributions from the helper method
+        bg_dist, bin_edges, cancer_dist = self.get_bins_of_distributions_ready(
+            background_scores, cancer_scores, score_type
         )
-    
-        # 5. Print the final result.
-        if kl_divergence is not None:
-            print("\n--- Analysis Complete ---")
-            print(f"The KL-Divergence is: {kl_divergence:.4f}")
-            print("(A higher value indicates a greater difference between the cancer mutation profile and the background model.)")
-        else:
-            print("\n--- Analysis Failed ---")
-            print("Could not calculate KL-Divergence, possibly due to insufficient data for the chosen score type.")
+
+        if np.sum(bg_dist) == 0 or np.sum(cancer_dist) == 0:
+            print(f"Warning: Empty distribution for '{score_type}'. Cannot calculate distance.")
+            return None
+
+        # 2. Calculate Wasserstein distance directly from the histogram densities
+        w_distance = DistributionDistances.wasserstein_from_hist(bg_dist, cancer_dist, bin_edges)
+
+        return w_distance
+
+
+
+
+
+############ WORKING EXAMPLE: ############
+
+"""
+# 1. Instantiate the class with the paths to your files.
+#    Replace these paths with the actual locations of your files.
+pathway_file = "./data/kegg/pathways/objects/hsa04010.pickle"
+cancer_file = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers/acc_mutations.csv"
+analyzer = CancerPathwayScoring(pathway_file, cancer_file)
+
+# 2. Collect the background scores from all genes in the pathway.
+print(f"Step 1: Collecting background scores for pathway '{pathway_file}'...")
+background_scores = analyzer.get_pathway_scores_background()
+
+# 3. Collect the cancer-specific scores for genes in that same pathway.
+print(f"Step 2: Collecting cancer-specific scores from '{cancer_file}'...")
+cancer_scores = analyzer.get_cancer_pathway_scores()
+
+# 4. Proceed only if both datasets have scores to compare.
+if background_scores and cancer_scores:
+    # We will use the 'clinvar_reg_global_prob' score for this example.
+    score_to_analyze = 'clinvar_reg_global_prob'
+
+    # --- KL-Divergence Calculation ---
+    print(f"\nStep 3a: Calculating KL-Divergence using '{score_to_analyze}' scores...")
+    kl_divergence = analyzer.calculate_distance_gmm_kl_d(
+        background_scores,
+        cancer_scores,
+        score_type=score_to_analyze
+    )
+
+    # --- Wasserstein Distance Calculation ---
+    print(f"Step 3b: Calculating Wasserstein Distance using '{score_to_analyze}' scores...")
+    wasserstein_dist = analyzer.calculate_distance_wasserstein(
+        background_scores,
+        cancer_scores,
+        score_type=score_to_analyze
+    )
+
+    # 5. Print the final results.
+    print("\n--- Analysis Complete ---")
+    if kl_divergence is not None:
+        print(f"The KL-Divergence is: {kl_divergence:.4f}")
+        print("(Measures the information gain from switching from the background to the cancer model.)")
     else:
-        print("\n--- Analysis Skipped ---")
-        if not background_scores:
-            print("Could not find any background scores in the pathway file.")
-        if not cancer_scores:
-            print("No mutations found in the cancer dataset for the genes in this specific pathway.")
-    """
+        print("Could not calculate KL-Divergence.")
+
+    if wasserstein_dist is not None:
+        print(f"The Wasserstein Distance is: {wasserstein_dist:.4f}")
+        print("(Represents the 'work' required to transform the background distribution into the cancer distribution.)")
+    else:
+        print("Could not calculate Wasserstein Distance.")
+
+    print(
+        "\n(Higher values for both metrics indicate a greater difference between the cancer mutation profile and the background model.)")
+
+else:
+    print("\n--- Analysis Skipped ---")
+    if not background_scores:
+        print("Could not find any background scores in the pathway file.")
+    if not cancer_scores:
+        print("No mutations found in the cancer dataset for the genes in this specific pathway.")
+"""
