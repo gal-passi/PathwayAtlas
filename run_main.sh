@@ -3,7 +3,7 @@
 #SBATCH --killable
 #SBATCH --requeue
 #SBATCH --time=72:00:00
-#SBATCH --mem=20G
+#SBATCH --mem=16G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
 ###########SBATCH --gres=gg:g4:1

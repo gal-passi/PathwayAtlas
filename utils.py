@@ -1110,7 +1110,7 @@ class ScoringCalculator:
             This is for background model CSVs."""
         return self.save_mutation_scores_to_csv_full(sequence, csv_path, csv_path)
         
-    ### This part is for handling the special case of the cancer-CSVs
+    ########## This part is for handling the special case of the cancer-CSVs
     def handle_cancer_row(self, row: pd.Series) -> pd.Series:
         """
         Takes a row with UniprotId and RefrenceSeq, and produce all scoring types:

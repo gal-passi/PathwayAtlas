@@ -1,9 +1,17 @@
+import glob
+import os
+import sys
+from tqdm import tqdm
+
+back_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(back_dir)
+
 from definitions import CANCER_READY_DISORDER_PATH, CANCER_READY_EMBEDDINGS_PATH, CANCER_CSVS_MUTATIONS
 from utils import ScoringCalculator
 
-import glob
-import os
-from tqdm import tqdm
+
+
+
 
 #############
 # going through the cancer CSV files and filling the scores columns

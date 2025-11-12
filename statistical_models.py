@@ -1,3 +1,5 @@
+from typing import List, Optional, Dict
+
 from definitions import *
 import pandas as pd
 from collections import defaultdict
@@ -180,6 +182,7 @@ class GMM:
 
         plt.show()
 
+    # TODO use this in the results functions
     def save_distribution(self, pathway_id, joint_distribution, bin_edges,
                           gmm_model=None, output_dir=DISTRIBUTIONS_PATH):
         """
@@ -486,7 +489,7 @@ class CancerPathwayScoring:
         return joint_distribution, bin_edges
 
     def get_bins_of_distributions_ready(self, background_scores: dict, cancer_scores: dict,
-                                        score_type: str = "clinvar_reg_global_prob"):
+                                        score_type: str = "clinvar_reg_dis_ordered_prob"):
         """
         A helper method to generate the background and cancer distributions.
         This centralizes the distribution creation logic to be used by multiple
@@ -510,7 +513,7 @@ class CancerPathwayScoring:
         return bg_dist, bin_edges, cancer_dist
 
     def calculate_distance_gmm_kl_d(self, background_scores: dict, cancer_scores: dict,
-                                    score_type: str = "clinvar_reg_global_prob") -> float:
+                                    score_type: str = "clinvar_reg_dis_ordered_prob") -> float:
         """
         Calculates KL-Divergence between background and cancer score distributions
         by modeling them with GMMs.
@@ -538,7 +541,7 @@ class CancerPathwayScoring:
         return kl_divergence
 
     def calculate_distance_wasserstein(self, background_scores: dict, cancer_scores: dict,
-                                       score_type: str = "clinvar_reg_global_prob") -> float:
+                                       score_type: str = "clinvar_reg_dis_ordered_prob") -> float:
         """
         Calculates the 1-Wasserstein distance between the background and cancer
         score distributions directly from their histograms.
@@ -560,10 +563,202 @@ class CancerPathwayScoring:
 
 
 
+class PathwayAtlasResults:
+    """
+    This class orchestrates the calculation of distance scores for all pairs of pathway-cancer data.
+    """
 
-############ WORKING EXAMPLE: ############
+    def __init__(self, cancer_csvs_path: str = CANCER_CSVS_MUTATIONS, pathways_dicts_path: str = KEGG_PATHWAY_OBJECTS_PATH):
+        """
+        Initializes the PathwayAtlasResults with paths to the data directories.
+
+        Args:
+            cancer_csvs_path (str): Path to the directory containing cancer mutation CSV files.
+            pathways_dicts_path (str): Path to the directory containing pathway data files (e.g., pickles).
+        """
+        if not os.path.isdir(cancer_csvs_path):
+            raise FileNotFoundError(f"The specified cancer CSVs path does not exist: {cancer_csvs_path}")
+        if not os.path.isdir(pathways_dicts_path):
+            raise FileNotFoundError(f"The specified pathways dictionaries path does not exist: {pathways_dicts_path}")
+
+        self.__cancer_csvs_path = cancer_csvs_path
+        self.__pathways_dicts_path = pathways_dicts_path
+        self.results = {}
+        print("PathwayAtlasResults initialized successfully.")
+        print(f"Cancer data will be read from: {self.__cancer_csvs_path}")
+        print(f"Pathway data will be read from: {self.__pathways_dicts_path}\n\n")
+
+    def _calculate_distance(self, analyzer, scoring_system: str, background_scores: Dict,
+                            cancer_scores: Dict, score_to_analyze: str) -> Optional[float]:
+        """
+        Calculates the distance based on the specified scoring system.
+
+        Args:
+            analyzer: An instance of CancerPathwayScoring.
+            scoring_system (str): The scoring system to use ('kl_divergence' or 'wasserstein').
+            background_scores (Dict): A dictionary of background scores for genes in the pathway.
+            cancer_scores (Dict): A dictionary of cancer-specific scores for genes in the pathway.
+            score_to_analyze (str): The key for the score to extract from the score dictionaries.
+
+        Returns:
+            Optional[float]: The calculated distance, or None if the scoring system is invalid.
+        """
+        distance_calculators = {
+            "kl_divergence": analyzer.calculate_distance_gmm_kl_d,
+            "wasserstein": analyzer.calculate_distance_wasserstein,
+        }
+        calculator = distance_calculators.get(scoring_system)
+        if calculator:
+            return calculator(background_scores, cancer_scores, score_type=score_to_analyze)
+        else:
+            print(f"Error: Invalid scoring system specified: '{scoring_system}'. Cannot calculate distance.")
+            return None
+
+    def calculate_distances_single_cancer(self, cancer_file_path: str, score_to_analyze: str,
+                                          scoring_system: str) -> Dict[str, float]:
+        """
+        For each pathway, calculates the distance to a single cancer dataset.
+
+        Args:
+            cancer_file_path (str): The file path for a single cancer's mutation data.
+            score_to_analyze (str): The specific score to be analyzed (e.g., 'clinvar_reg_dis_ordered_prob').
+            scoring_system (str): The distance metric to use, e.g., 'kl_divergence' or 'wasserstein'.
+
+        Returns:
+            Dict[str, float]: A dictionary where keys are pathway file names and values are the calculated distances.
+        """
+        if not os.path.isfile(cancer_file_path):
+            print(f"Error: Cancer file not found at path: {cancer_file_path}")
+            return {}
+
+        cancer_name = os.path.basename(cancer_file_path)
+        print(f"\n--- Starting Analysis for Cancer: {cancer_name} ---")
+        self.results[cancer_name] = {}
+
+        pathway_files = sorted(os.listdir(self.__pathways_dicts_path))
+        for i, pathway_file in enumerate(pathway_files):
+            pathway_path = os.path.join(self.__pathways_dicts_path, pathway_file)
+            print(f"\n({i + 1}/{len(pathway_files)}) Analyzing Pathway: {pathway_file}")
+
+            try:
+                # Instantiate the analyzer for the specific cancer-pathway pair
+                analyzer = CancerPathwayScoring(pathway_path, cancer_file_path)
+
+                background_scores = analyzer.get_pathway_scores_background()
+                cancer_scores = analyzer.get_cancer_pathway_scores()
+
+                if background_scores and cancer_scores:
+                    distance = self._calculate_distance(analyzer, scoring_system,
+                                                        background_scores, cancer_scores,
+                                                        score_to_analyze)
+                    if distance is not None:
+                        self.results[cancer_name][pathway_file] = distance
+                        print(f"Success! Calculated distance for {cancer_name}---{pathway_file}: {distance:.4f}  {scoring_system}")
+                else:
+                    print(f"Analysis skipped for {cancer_name}-{pathway_file}.")
+                    if not background_scores:
+                        print("--> Reason: Could not find any background scores in the pathway file.")
+                    if not cancer_scores:
+                        print("--> Reason: No mutations found in the cancer dataset for the genes in this pathway.")
+            except Exception as e:
+                print(f"An unexpected error occurred during analysis of {cancer_name}-{pathway_file}: {e}")
+
+        print(f"\n--- Analysis Complete for Cancer: {cancer_name} ---")
+        return self.results[cancer_name]
+
+    def run_full_analysis(self, score_to_analyze: str, scoring_system: str,
+                          results_path: str = RESULTS_PATH) -> Dict[str, Dict[str, float]]:
+        """
+        Runs the entire analysis by iterating through all cancer files,
+        calculating distances against all pathways, and saving backup results incrementally.
+
+        Args:
+            score_to_analyze (str): The score type to use for the analysis
+                                    (e.g., 'clinvar_reg_dis_ordered_prob').
+            scoring_system (str): The distance metric to use
+                                  (e.g., 'kl_divergence', 'wasserstein').
+            results_path (str): The directory where backup and final results will be saved.
+
+        Returns:
+            Dict[str, Dict[str, float]]: A nested dictionary containing the complete results.
+            The structure is: {cancer_name: {pathway_file: distance_score}}.
+        """
+        print(f"\n{'=' * 25}\n--- Starting Full Atlas Analysis ---")
+        print(f"Using Score: '{score_to_analyze}'")
+        print(f"Using Distance Metric: '{scoring_system}'")
+        print(f"{'=' * 25}\n")
+
+        # Clear any previous results to ensure a fresh run
+        self.results = {}
+
+        # Ensure the results directory exists
+        os.makedirs(results_path, exist_ok=True)
+
+        cancer_files = sorted(os.listdir(self.__cancer_csvs_path))
+        if not cancer_files:
+            print("[Warning] No cancer files found in the specified directory.")
+            return {}
+
+        backup_filename = f"backup_results_{scoring_system}_{score_to_analyze}.pickle"
+        backup_file_path = os.path.join(results_path, backup_filename)
+
+        for i, cancer_file in enumerate(cancer_files):
+            cancer_file_path = os.path.join(self.__cancer_csvs_path, cancer_file)
+
+            # Skip directories or non-file items
+            if not os.path.isfile(cancer_file_path):
+                continue
+
+            print(f"\n{'#' * 15} Processing Cancer {i + 1}/{len(cancer_files)}: {cancer_file} {'#' * 15}")
+
+            # This method will perform the analysis for one cancer vs all pathways
+            # and internally update self.results
+            self.calculate_distances_single_cancer(
+                cancer_file_path,
+                score_to_analyze,
+                scoring_system
+            )
+
+            # --- Save a backup after each cancer is fully processed ---
+            try:
+                with open(backup_file_path, 'wb') as f:
+                    pickle.dump(self.results, f, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"\n[Backup] Progress for {i + 1} cancers saved to: {backup_file_path}")
+            except Exception as e:
+                print(f"\n[Error] Could not save backup file: {e}")
+
+        print(f"\n{'=' * 30}\n--- Full Atlas Analysis Completed ---\n{'=' * 30}")
+        return self.results
+
+
+
+
+def main():
+    resulter = PathwayAtlasResults()
+    for score_to_analyze in ["clinvar_reg_dis_ordered_prob", "clinvar_reg_global_prob"]:
+        for scoring_system in ["kl_divergence", "wasserstein"]:
+
+            final_results_for_run = resulter.run_full_analysis(
+                score_to_analyze=score_to_analyze,
+                scoring_system=scoring_system,
+                results_path=RESULTS_PATH
+            )
+
+            final_filename = f"FINAL_results_{scoring_system}_{score_to_analyze}.pickle"
+            final_filepath = os.path.join(RESULTS_PATH, final_filename)
+            try:
+                with open(final_filepath, 'wb') as f:
+                    pickle.dump(final_results_for_run, f, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"\n[SUCCESS] Final results for this run saved to: {final_filepath}")
+            except Exception as e:
+                print(f"\n[ERROR] Could not save the final results file: {e}")
+
+
 
 """
+############ WORKING EXAMPLE: ############
+
+
 # 1. Instantiate the class with the paths to your files.
 #    Replace these paths with the actual locations of your files.
 pathway_file = "./data/kegg/pathways/objects/hsa04010.pickle"
@@ -580,8 +775,8 @@ cancer_scores = analyzer.get_cancer_pathway_scores()
 
 # 4. Proceed only if both datasets have scores to compare.
 if background_scores and cancer_scores:
-    # We will use the 'clinvar_reg_global_prob' score for this example.
-    score_to_analyze = 'clinvar_reg_global_prob'
+    # We will use the 'clinvar_reg_dis_ordered_prob' score for this example.
+    score_to_analyze = 'clinvar_reg_dis_ordered_prob'
 
     # --- KL-Divergence Calculation ---
     print(f"\nStep 3a: Calculating KL-Divergence using '{score_to_analyze}' scores...")

@@ -33,6 +33,7 @@ DISTRIBUTIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'distributions')
 CANCER_READY_EMBEDDINGS_PATH = pjoin(CBIO_PATH, "emb")
 CANCER_READY_DISORDER_PATH = pjoin(CBIO_PATH, "disorder_scores")
 CLINVAR_MODELS_PATH = pjoin(DB, 'clinvar_models')
+RESULTS_PATH = './results and graphs'
 
 CANCER_CSVS_MUTATIONS = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
 
