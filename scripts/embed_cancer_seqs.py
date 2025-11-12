@@ -16,11 +16,11 @@ from tqdm import tqdm
 from esm import pretrained
 import torch
 
+
 def main():
     # --- Setup ---
-    working_dir = "/"
-    cancer_csv_dir = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
-    embedding_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/emb"
+    cancer_csv_dir = CANCER_CSVS_MUTATIONS
+    embedding_dir = CANCER_READY_EMBEDDINGS_PATH
 
     os.makedirs(embedding_dir, exist_ok=True)
 

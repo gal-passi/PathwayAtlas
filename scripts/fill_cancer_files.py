@@ -1,4 +1,4 @@
-from definitions import CANCER_READY_DISORDER_PATH, CANCER_READY_EMBEDDINGS_PATH
+from definitions import CANCER_READY_DISORDER_PATH, CANCER_READY_EMBEDDINGS_PATH, CANCER_CSVS_MUTATIONS
 from utils import ScoringCalculator
 
 import glob
@@ -29,7 +29,7 @@ print(f"Found {len(available_ids)} proteins with complete data.")
 calculator = ScoringCalculator(None, None, testing=True)
 
 # Define the folder path
-cancers_folder = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
+cancers_folder = CANCER_CSVS_MUTATIONS
 
 # Get a list of files to process
 all_files = [f for f in os.listdir(cancers_folder) if f.endswith('.csv')]

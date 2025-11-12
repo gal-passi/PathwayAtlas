@@ -5,7 +5,7 @@
 
     # TODO I suspect that the second line is shortening the sequence, thus giving shorter prediction vector,
     #  and causing mismatch of the disorder scoring in the "print(f"\ndisorder: position {position} out of {len(disorder_scores)}")" error.
-    #  This version is putting np.nan in laces that dont have a score
+    #  This version is putting np.nan in places that dont have a score
 
 
 import os
@@ -13,6 +13,8 @@ import pandas as pd
 from tqdm import tqdm
 from metapredict import meta
 import numpy as np
+
+from definitions import VALID_AA, V3_version_letters, CANCER_CSVS_MUTATIONS, CANCER_READY_DISORDER_PATH
 
 
 def get_aligned_disorder_scores(sequence):
@@ -39,14 +41,14 @@ def get_aligned_disorder_scores(sequence):
     aligned_scores = np.full(original_len, np.nan)
 
     # These are the characters metapredict will process
-    valid_chars = "ACDEFGHIKLMNPQRSTVWY"
+    valid_chars = VALID_AA
 
     # This is the sequence metapredict will effectively see.
     # Non-standard amino acids are replaced as per metapredict's known behavior.
     processed_seq_list = []
     original_indices = []
 
-    temp_seq = sequence.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
+    temp_seq = V3_version_letters(sequence)
 
     for i, char in enumerate(temp_seq):
         if char in valid_chars:
@@ -74,8 +76,8 @@ def main():
     and save them to individual files, ensuring alignment with the original sequence.
     """
     # --- Setup ---
-    disorder_scores_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/disorder_scores"
-    cancer_csv_dir = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
+    disorder_scores_dir = CANCER_READY_DISORDER_PATH
+    cancer_csv_dir = CANCER_CSVS_MUTATIONS
 
     os.makedirs(disorder_scores_dir, exist_ok=True)
 
