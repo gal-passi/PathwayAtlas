@@ -183,6 +183,66 @@ def open_df_pickle(path: str) -> dict:
     return {}
 
 
+def sep_csv_files(lines_per_file: int, filename: str):
+    """
+    Separates a large CSV file into smaller CSV files, preserving headers.
+    :param lines_per_file: int number of lines per file
+    :param filename: str path to the large CSV file
+    :return: None
+    """
+    base_path = os.path.join(CANCERS_PATH, filename)
+    with open(base_path, 'r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        headers = next(reader)  # Read the headers
+        rows = list(reader)
+
+    total_lines = len(rows)
+    num_files = (total_lines + lines_per_file - 1) // lines_per_file  # Ceiling division
+
+    for i in range(num_files):
+        chunk_rows = rows[i * lines_per_file:(i + 1) * lines_per_file]
+        chunk_file_path = f"{base_path}_part{i + 1}.csv"
+        new_filename = f"{filename}_part{i + 1}.csv"
+
+        with open(chunk_file_path, 'w', newline='', encoding='utf-8') as chunk_file:
+            writer = csv.writer(chunk_file)
+            writer.writerow(headers)  # Write the header to each new file
+            writer.writerows(chunk_rows)  # Write the rows
+
+        print(new_filename)
+
+
+def merge_csv_parts(filename):
+    """
+    Merges CSV files that share a prefix and are named like 'prefix_part1.csv', 'prefix_part2.csv', etc.
+    Keeps the header only once.
+
+    Parameters:
+    -----------
+    filename : str
+        The path of the CSV files to merge
+    """
+    pattern = f"{filename}_part*.csv"
+    csv_files = sorted(glob.glob(pattern))  # sort ensures consistent order
+
+    if not csv_files:
+        print(f"No CSV parts found for prefix '{filename}'")
+        return
+
+    merged_df = None
+    for i, file in enumerate(csv_files):
+        df = pd.read_csv(file)
+        if merged_df is None:
+            merged_df = df
+        else:
+            merged_df = pd.concat([merged_df, df], ignore_index=True)
+
+    merged_df = merged_df.drop_duplicates()  # optional
+    merged_df.to_csv(filename, index=False)
+
+    print(f"Merged {len(csv_files)} parts into '{filename}'")
+
+
 class UniprotApi:
     """
     This class is responsible to connect to online DBs and retrieve information
@@ -197,7 +257,7 @@ class UniprotApi:
         :param uid: Uniprot id only primary name
         :return: {uid_iso_index: sequence}
         """
-        print_if(self._v, VERBOSE['thread_progress'], "Retrieving isoforms from Uniprt...")
+        print_if(self._v, VERBOSE['thread_progress'], "Retrieving isoforms from Uniprot...")
         s = create_session(DEFAULT_HEADER, RETRIES, WAIT_TIME, RETRY_STATUS_LIST)
         url = Q_UNIP_ALL_ISOFORMS.format(uid, uid)
         response = safe_post_request(s, url, TIMEOUT, self._v, CON_ERR_FUS.format(uid, url))
@@ -360,6 +420,30 @@ class CbioApi:
                 for id, name in zip(study_ids, study_names):
                     file.write(f"{name} \t {id}\n")
         return study_ids, study_names
+
+    @staticmethod
+    def get_patient_age(study_id, patient_id):
+        url = f"{CBIO_BASE_URL}/studies/{study_id}/patients/{patient_id}/clinical-data"
+
+        headers = {
+            "accept": "application/json"
+        }
+
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Error fetching data: {response.status_code} - {response.text}")
+
+        clinical_data = response.json()
+
+        # Try to find age-related fields
+        age_fields = ["AGE", "AGE_AT_DIAGNOSIS", "AGE_AT_SEQ_REPORT", "AGE_AT_LAST_VISIT"]
+        for entry in clinical_data:
+            if entry["clinicalAttributeId"].upper() in age_fields:
+                age = entry["value"]
+                return age
+
+        return None  # Age not found
 
 
 class KeggApi:

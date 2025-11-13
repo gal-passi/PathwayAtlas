@@ -19,6 +19,7 @@ DB = 'data'
 CBIO_PATH = pjoin(DB, 'cbio')
 STUDIES_PATH = pjoin(CBIO_PATH, 'studies')
 CANCERS_PATH = pjoin(CBIO_PATH, 'cancers')
+SEQ_PATH = pjoin(CBIO_PATH, 'sequences')
 
 KEGG_PATH = pjoin(DB, 'kegg')
 KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')
@@ -28,12 +29,15 @@ KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')
 
 # FILES
 
-STUDIES_DFS = pjoin(DB, 'studies_dfs.pkl')
-CANCER_DFS = pjoin(DB, 'cancer_dfs.pkl')
+STUDIES_PICKLE = 'studies_dfs.pickle'
+CANCERS_PICKLE = 'cancer_dfs.pickle'
+SEQ_PICKLE = 'protein_seq_dict.pickle'
+STUDIES_DFS = pjoin(DB, STUDIES_PICKLE)
+CANCER_DFS = pjoin(DB, CANCERS_PICKLE)
 PROTEIN_SEQUENCES_FILE = pjoin(DB, 'protein_sequences.pkl')
 MUTATIONS_CSV_SUFFIX = '_mutations.csv'
 
-
+# CREATE DIRECTORIES
 DIRS_TO_CREATE = [DB, CBIO_PATH, KEGG_PATH, STUDIES_PATH, KEGG_GENES_PATH, KEGG_PATHWAYS_PATH,
                   KEGG_PATHWAY_OBJECTS_PATH,KEGG_PATHWAY_MUTATIONS_PATH]
 
@@ -49,7 +53,7 @@ Q_UID_PROT_ALL = "fields=&gene&format=tsv&query={}+AND+organism_id:9606"
 #   REQUESTS AND OS CONSTANTS
 
 TIMEOUT = 20.0
-WAIT_TIME = 1.0
+WAIT_TIME = 1
 RETRIES = 7
 RETRY_STATUS_LIST = [429, 500, 502, 503, 504, 403, 400]
 DEFAULT_HEADER = "https://"
@@ -90,7 +94,10 @@ VERBOSE = {'critical': 0, 'program_warning': 1, 'program_progress': 1,
 Q_UNIP_ALL_ISOFORMS = UNIP_QUERY_URL + "&format=fasta&query=" \
                                           "(accession:{}+AND+is_isoform:true)+OR+(accession:{}+AND+is_isoform:false)"
 
-CBIO_API_URL = 'https://www.cbioportal.org/api/v2/api-docs'
+
+CBIO_BASE_URL = 'https://www.cbioportal.org/api'
+CBIO_API_URL = CBIO_BASE_URL + '/v2/api-docs'
+
 MISSENSE_MUTATION = 'Missense_Mutation'
 CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
 CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
@@ -104,6 +111,9 @@ UNIPROT_ID_COL = 'UniprotId'
 PROTEIN_NAME_COL = 'Protein'
 VARIANT_COL = 'Variant'
 KEGG_COL = 'KeggId'
+STUDY_ID_COL = 'StudyId'
+PATIENT_ID_COL = 'PatientId'
+PATIENT_AGE_COL = 'Age'
 
 #  KEGG
 

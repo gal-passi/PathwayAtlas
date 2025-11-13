@@ -1,8 +1,9 @@
 from cbio import *
 from utils import *
 from Kegg import *
-
+import sys
 from esm import pretrained      # for model choosing and alphabet
+from cancer_age_analysis import *
 
 
 def init_kegg_genome(recalc=False):
@@ -109,7 +110,4 @@ if __name__ == '__main__':
 
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
-    cbio = CbioApi()
-    dfs = get_studies(cbio)
-    cancer_dfs = merge_studies(cbio, dfs)
-    add_sequences_to_mutations()
+
