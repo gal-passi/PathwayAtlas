@@ -38,7 +38,6 @@ export TORCH_HOME=./torch_cache
 #python -u ./scripts/embed_cancer_seqs.py       ## need gpu
 #python -u ./scripts/disorder_score_cancer.py
 python -u ./scripts/fill_cancer_files.py
-#python -u RUN DISTANCES FOR ALL VS ALL FOR ALL METHODS
 
 
 
