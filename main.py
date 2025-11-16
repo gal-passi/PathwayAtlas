@@ -175,9 +175,6 @@ def create_llr_and_dis_scoring(kegg: KeggApi):
 #     # using ESM1b model (GPU recommended) [./data/kegg/pathways/snvs]
 #     print("Creating mutations scoring for all KEGG proteins...")
 #     create_llr_and_dis_scoring(kegg)
-#
-#     # Step 6: Create GMMs distributions for all pathways
-#     # TODO
 
 
 

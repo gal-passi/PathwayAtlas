@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=cancer_scoring
+#SBATCH --job-name=filling_scores
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=72:00:00
+#SBATCH --time=90:00:00
 #SBATCH --mem=16G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out

@@ -183,7 +183,8 @@ class GMM:
         plt.show()
 
     # TODO use this in the results functions
-    def save_distribution(self, pathway_id, joint_distribution, bin_edges,
+    @staticmethod
+    def save_distribution(pathway_id, joint_distribution, bin_edges,
                           gmm_model=None, output_dir=DISTRIBUTIONS_PATH):
         """
         Saves the joint distribution, bin edges, and the fitted GMM model to a file using pickle.
@@ -234,6 +235,7 @@ class DistributionDistances:
     Contains methods for:
     - Chi-Squared distance from histograms.
     - Kullback-Leibler (KL) Divergence from fitted Gaussian Mixture Models (GMMs).
+    - 1-Wasserstein distance (Earth Mover's Distance)
     """
 
     @staticmethod
@@ -337,29 +339,42 @@ class CancerPathwayScoring:
     and a specific cancer type's mutation dataset.
     """
 
-    def __init__(self, pathway_dict_path: str, cancer_csv_path: str):
+    def __init__(self, pathway_dict_path: str, pathway_scores_csv_path: str, cancer_csv_path: str):
         """
         Initializes the scoring object by loading pathway and cancer data.
 
         Parameters
         ----------
         pathway_dict_path : str
-            File path to the pickled pathway dictionary mapping gene IDs to SNV CSVs.
+            File path to the pickled pathway dictionary. Used to get the list of gene IDs.
+        pathway_scores_csv_path : str
+            File path to the pre-aggregated CSV with all background scores for the pathway.
         cancer_csv_path : str
             File path to the CSV with scored cancer mutations.
         """
         self.pathway_dict_path = pathway_dict_path
+        self.pathway_scores_csv_path = pathway_scores_csv_path
         self.cancer_csv_path = cancer_csv_path
         self.pssm = MICHAL_HN1_PSSM  # Using the predefined PSSM for weighting
         self.gmm_fitter = GMM()  # GMM helper instance for fitting models
 
+        # --- MODIFICATION 1: Load both pathway definition and pathway scores ---
+        # Load the pickle file to get the definitive list of gene IDs
         try:
             with open(self.pathway_dict_path, 'rb') as f:
                 self.pathway_dict = pickle.load(f)
-        except FileNotFoundError:
-            print(f"[Error] Pathway dictionary file not found: {self.pathway_dict_path}")
+        except (FileNotFoundError, EOFError) as e:
+            print(f"[Error] Could not load pathway dictionary {self.pathway_dict_path}: {e}")
             self.pathway_dict = {}
 
+        # Load the pre-aggregated CSV with all background scores
+        try:
+            self.pathway_df = pd.read_csv(self.pathway_scores_csv_path)
+        except FileNotFoundError:
+            print(f"[Error] Pathway scores CSV not found: {self.pathway_scores_csv_path}")
+            self.pathway_df = pd.DataFrame()
+
+        # Load cancer data (no change here)
         try:
             self.cancer_df = pd.read_csv(self.cancer_csv_path)
         except FileNotFoundError:
@@ -369,10 +384,6 @@ class CancerPathwayScoring:
     def get_pathway_genes_id(self) -> set:
         """Returns a set of KEGG gene IDs in the pathway."""
         return set(self.pathway_dict.keys())
-
-    def get_pathway_genes_csv_paths(self) -> list:
-        """Returns a list of file paths to the SNV CSVs for each gene."""
-        return list(self.pathway_dict.values())
 
     def get_pathway_scores_background(self) -> dict:
         """
@@ -385,43 +396,52 @@ class CancerPathwayScoring:
             A nested dictionary: {mut_type: {score_type: [scores]}}.
             Example: {"A>C": {"esm_log_probs": [0.1, 0.2], ...}, ...}
         """
+        if self.pathway_df.empty:
+            return {}
+
         background_scores = defaultdict(lambda: defaultdict(list))
 
-        for csv_path in self.get_pathway_genes_csv_paths():
-            if not isinstance(csv_path, str) or not os.path.exists(csv_path):
-                continue
+        # Check for essential columns in the pre-aggregated CSV
+        required_cols = {"Ref", "Alt"}
+        if not required_cols.issubset(self.pathway_df.columns):
+            print(f"Warning: 'Ref' or 'Alt' columns missing in pathway scores file: {self.pathway_scores_csv_path}")
+            return {}
 
-            try:
-                gene_df = pd.read_csv(csv_path)
-                if not {"Ref", "Alt"}.issubset(gene_df.columns):
-                    continue
+        score_types = ['esm_log_probs', 'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob']
 
-                for _, row in gene_df.iterrows():
-                    mut_type = f"{str(row['Ref']).upper()}>{str(row['Alt']).upper()}"
+        # Efficiently iterate over the single, pre-loaded DataFrame
+        for _, row in self.pathway_df.iterrows():
+            mut_type = f"{str(row['Ref']).upper()}>{str(row['Alt']).upper()}"
 
-                    for score_type in ['esm_log_probs', 'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob']:
-                        if score_type in row and pd.notna(row[score_type]):
-                            background_scores[mut_type][score_type].append(float(row[score_type]))
+            for score_type in score_types:
+                # Check if score exists and is not NaN
+                if score_type in row and pd.notna(row[score_type]):
+                    background_scores[mut_type][score_type].append(float(row[score_type]))
 
-            except Exception as e:
-                print(f"Could not process background file {csv_path}: {e}")
-
+        # Convert defaultdicts to regular dicts for a clean return value
         return {mut: dict(scores) for mut, scores in background_scores.items()}
 
-    def get_cancer_pathway_scores(self) -> dict:
+    def get_cancer_pathway_scores(self) -> tuple[dict, int]:
         """
-        Filters the cancer dataset for mutations in the pathway's genes
-        and collects their scores, categorized by mutation and score type.
+        Filters the cancer dataset for mutations in the pathway's genes and
+        collects their scores.
+
+        Returns
+        -------
+        tuple[dict, int]
+            A tuple containing:
+            - A nested dictionary of scores: {mut_type: {score_type: [scores]}}.
+            - An integer count of the relevant mutations found.
         """
         cancer_scores = defaultdict(lambda: defaultdict(list))
         pathway_gene_ids = self.get_pathway_genes_id()
 
         if self.cancer_df.empty or not pathway_gene_ids:
-            return {}
+            return {}, 0  # Return count of 0
 
         required_cols = {'KeggId', 'Ref', 'Alt'}
         if not required_cols.issubset(self.cancer_df.columns):
-            return {}
+            return {}, 0  # Return count of 0
 
         relevant_df = self.cancer_df.dropna(subset=['KeggId', 'Ref', 'Alt']).copy()
 
@@ -431,8 +451,10 @@ class CancerPathwayScoring:
         mask = relevant_df['KeggId'].apply(is_in_pathway)
         pathway_cancer_mutations = relevant_df[mask]
 
+        mutation_count = len(pathway_cancer_mutations)
+
         if pathway_cancer_mutations.empty:
-            return {}
+            return {}, 0  # Return count of 0
 
         for _, row in pathway_cancer_mutations.iterrows():
             mut_type = f"{str(row['Ref']).upper()}>{str(row['Alt']).upper()}"
@@ -440,7 +462,7 @@ class CancerPathwayScoring:
                 if score_type in row and pd.notna(row[score_type]):
                     cancer_scores[mut_type][score_type].append(float(row[score_type]))
 
-        return {mut: dict(scores) for mut, scores in cancer_scores.items()}
+        return {mut: dict(scores) for mut, scores in cancer_scores.items()}, mutation_count
 
     @staticmethod
     def create_joint_distribution(scores_dict, pssm,
@@ -568,7 +590,9 @@ class PathwayAtlasResults:
     This class orchestrates the calculation of distance scores for all pairs of pathway-cancer data.
     """
 
-    def __init__(self, cancer_csvs_path: str = CANCER_CSVS_MUTATIONS, pathways_dicts_path: str = KEGG_PATHWAY_OBJECTS_PATH):
+    def __init__(self, cancer_csvs_path: str = CANCER_CSVS_MUTATIONS,
+                 pathways_dicts_path: str = KEGG_PATHWAY_OBJECTS_PATH,
+                 pathways_scores_path: str = PATHWAY_SCORES_PATH):
         """
         Initializes the PathwayAtlasResults with paths to the data directories.
 
@@ -583,6 +607,7 @@ class PathwayAtlasResults:
 
         self.__cancer_csvs_path = cancer_csvs_path
         self.__pathways_dicts_path = pathways_dicts_path
+        self.__pathways_scores_path = pathways_scores_path
         self.results = {}
         print("PathwayAtlasResults initialized successfully.")
         print(f"Cancer data will be read from: {self.__cancer_csvs_path}")
@@ -619,6 +644,10 @@ class PathwayAtlasResults:
         """
         For each pathway, calculates the distance to a single cancer dataset.
 
+        This function iterates through all available pathway definition files (pickles),
+        finds their corresponding aggregated score files (CSVs), and computes a
+        distance score against the provided cancer mutation data.
+
         Args:
             cancer_file_path (str): The file path for a single cancer's mutation data.
             score_to_analyze (str): The specific score to be analyzed (e.g., 'clinvar_reg_dis_ordered_prob').
@@ -635,124 +664,128 @@ class PathwayAtlasResults:
         print(f"\n--- Starting Analysis for Cancer: {cancer_name} ---")
         self.results[cancer_name] = {}
 
-        pathway_files = sorted(os.listdir(self.__pathways_dicts_path))
-        for i, pathway_file in enumerate(pathway_files):
-            pathway_path = os.path.join(self.__pathways_dicts_path, pathway_file)
-            print(f"\n({i + 1}/{len(pathway_files)}) Analyzing Pathway: {pathway_file}")
+        # Get the list of all pathway definition files (pickles)
+        pathway_dict_files = sorted(os.listdir(self.__pathways_dicts_path))
+
+        for i, pathway_dict_filename in enumerate(pathway_dict_files):
+            # Construct the full path to the pathway's pickle file
+            pathway_dict_filepath = os.path.join(self.__pathways_dicts_path, pathway_dict_filename)
+
+            # From the pickle filename, derive the corresponding scores CSV filename
+            base_name = os.path.splitext(pathway_dict_filename)[0]
+            pathway_scores_filename = f"{base_name}.csv"
+            pathway_scores_filepath = os.path.join(self.__pathways_scores_path, pathway_scores_filename)
+
+            print(f"\n({i + 1}/{len(pathway_dict_files)}) Analyzing Pathway: {base_name}")
+
+            # Safety check: ensure the required scores CSV file actually exists
+            if not os.path.isfile(pathway_scores_filepath):
+                print(f"--> Warning: Scores CSV '{pathway_scores_filename}' not found [empty pathway probably]. Skipping.")
+                continue
 
             try:
-                # Instantiate the analyzer for the specific cancer-pathway pair
-                analyzer = CancerPathwayScoring(pathway_path, cancer_file_path)
+                # Instantiate the analyzer with the three required file paths
+                analyzer = CancerPathwayScoring(
+                    pathway_dict_path=pathway_dict_filepath,
+                    pathway_scores_csv_path=pathway_scores_filepath,
+                    cancer_csv_path=cancer_file_path
+                )
 
+                # Get the score dictionaries. The background one is now loaded very fast.
                 background_scores = analyzer.get_pathway_scores_background()
-                cancer_scores = analyzer.get_cancer_pathway_scores()
+                cancer_scores, mutation_count = analyzer.get_cancer_pathway_scores()
 
+                # Proceed only if both datasets contain relevant data
                 if background_scores and cancer_scores:
                     distance = self._calculate_distance(analyzer, scoring_system,
                                                         background_scores, cancer_scores,
                                                         score_to_analyze)
                     if distance is not None:
-                        self.results[cancer_name][pathway_file] = distance
-                        print(f"Success! Calculated distance for {cancer_name}---{pathway_file}: {distance:.4f}  {scoring_system}")
+                        # Store the result: { "hsa04010.pickle": ... }
+                        # Store a dictionary with both distance and count
+                        self.results[cancer_name][pathway_dict_filename] = {
+                            'distance': distance,
+                            'n': mutation_count
+                        }
+                        print(f"--> Success! Distance ({scoring_system}): {distance:.4f}   (n={mutation_count})")
                 else:
-                    print(f"Analysis skipped for {cancer_name}-{pathway_file}.")
+                    # Provide a clear reason for skipping
+                    print(f"--> Analysis skipped.")
                     if not background_scores:
-                        print("--> Reason: Could not find any background scores in the pathway file.")
+                        print("    Reason: No background scores could be loaded from the pathway files.")
                     if not cancer_scores:
-                        print("--> Reason: No mutations found in the cancer dataset for the genes in this pathway.")
+                        print("    Reason: No mutations from this cancer were found in the pathway's genes.")
+
             except Exception as e:
-                print(f"An unexpected error occurred during analysis of {cancer_name}-{pathway_file}: {e}")
+                print(f"--> An unexpected error occurred during analysis of {cancer_name}-{base_name}: {e}")
 
         print(f"\n--- Analysis Complete for Cancer: {cancer_name} ---")
         return self.results[cancer_name]
 
-    def run_full_analysis(self, score_to_analyze: str, scoring_system: str,
-                          results_path: str = RESULTS_PATH) -> Dict[str, Dict[str, float]]:
-        """
-        Runs the entire analysis by iterating through all cancer files,
-        calculating distances against all pathways, and saving backup results incrementally.
-
-        Args:
-            score_to_analyze (str): The score type to use for the analysis
-                                    (e.g., 'clinvar_reg_dis_ordered_prob').
-            scoring_system (str): The distance metric to use
-                                  (e.g., 'kl_divergence', 'wasserstein').
-            results_path (str): The directory where backup and final results will be saved.
-
-        Returns:
-            Dict[str, Dict[str, float]]: A nested dictionary containing the complete results.
-            The structure is: {cancer_name: {pathway_file: distance_score}}.
-        """
-        print(f"\n{'=' * 25}\n--- Starting Full Atlas Analysis ---")
-        print(f"Using Score: '{score_to_analyze}'")
-        print(f"Using Distance Metric: '{scoring_system}'")
-        print(f"{'=' * 25}\n")
-
-        # Clear any previous results to ensure a fresh run
-        self.results = {}
-
-        # Ensure the results directory exists
-        os.makedirs(results_path, exist_ok=True)
-
-        cancer_files = sorted(os.listdir(self.__cancer_csvs_path))
-        if not cancer_files:
-            print("[Warning] No cancer files found in the specified directory.")
-            return {}
-
-        backup_filename = f"backup_results_{scoring_system}_{score_to_analyze}.pickle"
-        backup_file_path = os.path.join(results_path, backup_filename)
-
-        for i, cancer_file in enumerate(cancer_files):
-            cancer_file_path = os.path.join(self.__cancer_csvs_path, cancer_file)
-
-            # Skip directories or non-file items
-            if not os.path.isfile(cancer_file_path):
-                continue
-
-            print(f"\n{'#' * 15} Processing Cancer {i + 1}/{len(cancer_files)}: {cancer_file} {'#' * 15}")
-
-            # This method will perform the analysis for one cancer vs all pathways
-            # and internally update self.results
-            self.calculate_distances_single_cancer(
-                cancer_file_path,
-                score_to_analyze,
-                scoring_system
-            )
-
-            # --- Save a backup after each cancer is fully processed ---
-            try:
-                with open(backup_file_path, 'wb') as f:
-                    pickle.dump(self.results, f, protocol=pickle.HIGHEST_PROTOCOL)
-                print(f"\n[Backup] Progress for {i + 1} cancers saved to: {backup_file_path}")
-            except Exception as e:
-                print(f"\n[Error] Could not save backup file: {e}")
-
-        print(f"\n{'=' * 30}\n--- Full Atlas Analysis Completed ---\n{'=' * 30}")
-        return self.results
-
-
-
-
-def main():
-    resulter = PathwayAtlasResults()
-    for score_to_analyze in ["clinvar_reg_dis_ordered_prob", "clinvar_reg_global_prob"]:
-        for scoring_system in ["kl_divergence", "wasserstein"]:
-
-            final_results_for_run = resulter.run_full_analysis(
-                score_to_analyze=score_to_analyze,
-                scoring_system=scoring_system,
-                results_path=RESULTS_PATH
-            )
-
-            final_filename = f"FINAL_results_{scoring_system}_{score_to_analyze}.pickle"
-            final_filepath = os.path.join(RESULTS_PATH, final_filename)
-            try:
-                with open(final_filepath, 'wb') as f:
-                    pickle.dump(final_results_for_run, f, protocol=pickle.HIGHEST_PROTOCOL)
-                print(f"\n[SUCCESS] Final results for this run saved to: {final_filepath}")
-            except Exception as e:
-                print(f"\n[ERROR] Could not save the final results file: {e}")
-
+    # this might take forever to run, split to sarray jobs
+    # def run_full_analysis(self, score_to_analyze: str, scoring_system: str,
+    #                       results_path: str = RESULTS_PATH) -> Dict[str, Dict[str, float]]:
+    #     """
+    #     Runs the entire analysis by iterating through all cancer files,
+    #     calculating distances against all pathways, and saving backup results incrementally.
+    #
+    #     Args:
+    #         score_to_analyze (str): The score type to use for the analysis
+    #                                 (e.g., 'clinvar_reg_dis_ordered_prob').
+    #         scoring_system (str): The distance metric to use
+    #                               (e.g., 'kl_divergence', 'wasserstein').
+    #         results_path (str): The directory where backup and final results will be saved.
+    #
+    #     Returns:
+    #         Dict[str, Dict[str, float]]: A nested dictionary containing the complete results.
+    #         The structure is: {cancer_name: {pathway_file: distance_score}}.
+    #     """
+    #     print(f"\n{'=' * 25}\n--- Starting Full Atlas Analysis ---")
+    #     print(f"Using Score: '{score_to_analyze}'")
+    #     print(f"Using Distance Metric: '{scoring_system}'")
+    #     print(f"{'=' * 25}\n")
+    #
+    #     # Clear any previous results to ensure a fresh run
+    #     self.results = {}
+    #
+    #     # Ensure the results directory exists
+    #     os.makedirs(results_path, exist_ok=True)
+    #
+    #     cancer_files = sorted(os.listdir(self.__cancer_csvs_path))
+    #     if not cancer_files:
+    #         print("[Warning] No cancer files found in the specified directory.")
+    #         return {}
+    #
+    #     backup_filename = f"backup_results_{scoring_system}_{score_to_analyze}.pickle"
+    #     backup_file_path = os.path.join(results_path, backup_filename)
+    #
+    #     for i, cancer_file in enumerate(cancer_files):
+    #         cancer_file_path = os.path.join(self.__cancer_csvs_path, cancer_file)
+    #
+    #         # Skip directories or non-file items
+    #         if not os.path.isfile(cancer_file_path):
+    #             continue
+    #
+    #         print(f"\n{'#' * 15} Processing Cancer {i + 1}/{len(cancer_files)}: {cancer_file} {'#' * 15}")
+    #
+    #         # This method will perform the analysis for one cancer vs all pathways
+    #         # and internally update self.results
+    #         self.calculate_distances_single_cancer(
+    #             cancer_file_path,
+    #             score_to_analyze,
+    #             scoring_system
+    #         )
+    #
+    #         # --- Save a backup after each cancer is fully processed ---
+    #         try:
+    #             with open(backup_file_path, 'wb') as f:
+    #                 pickle.dump(self.results, f, protocol=pickle.HIGHEST_PROTOCOL)
+    #             print(f"\n[Backup] Progress for {i + 1} cancers saved to: {backup_file_path}")
+    #         except Exception as e:
+    #             print(f"\n[Error] Could not save backup file: {e}")
+    #
+    #     print(f"\n{'=' * 30}\n--- Full Atlas Analysis Completed ---\n{'=' * 30}")
+    #     return self.results
 
 
 """

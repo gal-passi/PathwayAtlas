@@ -1127,7 +1127,7 @@ class ScoringCalculator:
             # This regex captures the wild type AA, position, and mutant AA.
             match = re.match(r'(?:p\.)?([A-Z*])(\d+)([A-Z*])', str(mutation))
             if not match or not uniprot_id or uniprot_id == "nan":
-                print(f"\nNo match to {mutation} or UniprotId: {uniprot_id} problem.")
+                print(f"No match to {mutation} or UniprotId: {uniprot_id} problem.")
                 return results  # Return NaNs if the format is not recognized
 
             wt_aa, pos_str, mut_aa = match.groups()

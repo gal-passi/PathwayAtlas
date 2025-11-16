@@ -57,6 +57,6 @@ else:
         file_iterator.set_postfix_str(filename)
 
         # Process the file
-        calculator.handle_cancer_csv(full_path, available_ids, recalc_scores=False)
+        calculator.handle_cancer_csv(full_path, available_ids, recalc_scores=True)
 
 print("\nAll files processed.")
