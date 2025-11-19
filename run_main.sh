@@ -18,13 +18,13 @@ source /cs/labs/dina/ophirmil12/miniforge3/etc/profile.d/conda.sh
 conda activate project_env
 
 # go to PathwayAtlas folder [local git folder - cd .]
-cd /cs/labs/dina/ophirmil12/PathwayAtlas/
+cd /cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/
 
 ## startup venv       NO NEED WHEN HAVE CONDA
 #source ./venv/bin/activate
 
 # install all requirements
-# pip install --no-cache-dir -r requirements.txt
+#pip install --no-cache-dir -r requirements.txt
 
 # export esm model path to local venv
 export TORCH_HOME=./torch_cache
