@@ -3,8 +3,6 @@ from utils import *
 from Kegg import *
 import sys
 from esm import pretrained      # for model choosing and alphabet
-from cancer_age_analysis import *
-
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
@@ -110,4 +108,5 @@ if __name__ == '__main__':
 
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
+    pass
 
