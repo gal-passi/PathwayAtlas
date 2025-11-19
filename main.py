@@ -1,8 +1,9 @@
+from cbio import *
 from utils import *
 from Kegg import *
-
+import sys
 from esm import pretrained      # for model choosing and alphabet
-from cbio import *
+
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
@@ -105,35 +106,7 @@ def create_llr_scoring(kegg: KeggApi):
 
 
 if __name__ == '__main__':
+
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
-    """
-
-    kegg = KeggApi()
-
-
-    # Step 1: Initialize KEGG genome (download all genes) [./data/kegg/genes]
-    print("Downloading/Loading KEGG genome...")
-    init_kegg_genome()
-
-    # step 2: create all_snvs for all genes [./data/kegg/pathways/snvs]
-    print("Creating all SNVs in all genes...")
-    genes_all_snvs(kegg, recalc=True)
-
-    # Step 3: build dict objects for each pathway from gene_id to snvs file [./data/kegg/pathways/objects]
-    print("Mapping genes snvs to pathways and modules...")
-    pathways_and_modules_dict(kegg)
-    # Notice that some values in the dict may be None, which means that the SNV file is not available for that gene.
-    
-    # Step 4: for each AA, determine if it`s in disordered region
-    print("Disordered predictions...")
-    disordered_aa_prediction(kegg, recalc=True)
-
-    # Step 5: create LLR scoring and disorder scoring for all KEGG proteins
-    # using ESM1b model (GPU recommended) and metapredict [./data/kegg/pathways/snvs]
-    print("Creating LLR scoring for all KEGG proteins...")
-    create_llr_scoring(kegg)
-"""
-    # Step 6: Download cBioPortal data
-    # TODO: Lotem
-    get_studies()
+    pass
