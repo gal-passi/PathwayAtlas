@@ -31,14 +31,11 @@ export TORCH_HOME=./torch_cache
 
 
 
-
-
-
 # run code (output in slurm .out file)                              ####### PY FILE NAME #######
 #python -u ./scripts/embed_cancer_seqs.py       ## need gpu
 #python -u ./scripts/disorder_score_cancer.py
-python -u ./scripts/fill_cancer_files.py
-
+#python -u ./scripts/fill_cancer_files.py
+python -u main.py
 
 
 

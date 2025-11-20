@@ -32,11 +32,16 @@ class GMM:
         gmm = GaussianMixture(
             n_components=n_components,
             random_state=random_state,
+            init_params='random',   # only for bootstrap
+            tol=1e-3,    # only for bootstrap
+            max_iter=50, # only for bootstrap
+            n_init=1,    # only for bootstrap
             covariance_type='full'
         )
         gmm.fit(reconstructed_data)
 
-        bic = gmm.bic(reconstructed_data)
+        #bic = gmm.bic(reconstructed_data)
+        bic = None
         return gmm, bic
 
     def GMM_bic_curve(self, joint_distribution, bin_edges, max_components=10,
@@ -226,8 +231,6 @@ class GMM:
             print(f"Error saving distribution for {pathway_id}: {e}")
 
 
-
-
 class DistributionDistances:
     """
     A utility class to calculate distances between two data distributions.
@@ -328,9 +331,6 @@ class DistributionDistances:
         # It takes the locations (values) and their respective weights (probabilities).
         return wasserstein_distance(u_values=bin_centers, v_values=bin_centers,
                                     u_weights=counts1, v_weights=counts2)
-
-
-
 
 
 class CancerPathwayScoring:
@@ -583,8 +583,6 @@ class CancerPathwayScoring:
         return w_distance
 
 
-
-
 class PathwayAtlasResults:
     """
     This class orchestrates the calculation of distance scores for all pairs of pathway-cancer data.
@@ -721,6 +719,113 @@ class PathwayAtlasResults:
 
         print(f"\n--- Analysis Complete for Cancer: {cancer_name} ---")
         return self.results[cancer_name]
+
+
+class PermutationTest:
+    """
+    Encapsulates the logic for performing statistical significance testing
+    (Permutation / Bootstrap tests) on pathway distances.
+    """
+
+    def __init__(self, bg_scores_pathway: str, cancer_scores_file: str, bootstrap_n: int = BOOTSTRAP_SAMPLES, random_state: int = 42):
+        self.n_permutations = bootstrap_n
+        self.random_state = random_state
+        self.gmm_fitter = GMM()  # Uses your existing GMM class
+
+        if not os.path.exists(bg_scores_pathway) or not os.path.exists(cancer_scores_file):
+            print(f"Error: One or both score files do not exist: {bg_scores_pathway}, {cancer_scores_file}")
+            return
+
+        self.bg_scores_pathway = bg_scores_pathway
+        self.cancer_scores_file = cancer_scores_file
+
+        np.random.seed(random_state)
+
+    def run_permutation_test(self):
+
+        cancer_scores_df = pd.read_csv(self.cancer_scores_file)
+
+        for idx, row in cancer_scores_df.iterrows():
+
+            pathway = row['pathway_name']
+            num_samples = row['n']  # Number of samples in the cancer data
+            cancer_distance = row['distance']  # Observed distance value
+
+            if num_samples < MIN_CANCER_SAMPLES:
+                cancer_scores_df.drop(idx, inplace=True)
+                continue
+
+            pathway_bg_filename = pjoin(self.bg_scores_pathway, f"{pathway}.csv")
+            if not os.path.exists(pathway_bg_filename):
+                print(f"Background scores file not found for pathway {pathway}. Skipping.")
+                continue
+
+            bg_scores_df = pd.read_csv(pathway_bg_filename)
+            bg_scores = bg_scores_df['clinvar_reg_dis_ordered_prob'].dropna().tolist()
+            scores_dict = {i: score for i, score in enumerate(bg_scores)}
+
+            # Fit GMM to the full background scores
+            bg_hist, bin_edges = PathwayAtlasResults.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+            bg_gmm, _ = self.gmm_fitter.GMM_the_distribution(bg_hist, bin_edges)
+            if bg_gmm is None:
+                print(f"GMM fitting failed for background scores of pathway {pathway}. Skipping.")
+                continue
+
+            print(f" ====== Starting permutation test for pathway: {pathway} ======")
+
+            distances = self._bootstrap_pathway(bg_gmm, bg_scores, num_samples)
+            p_value = self._calculate_p_value(cancer_distance, distances)
+
+            print(f"Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
+
+            cancer_scores_df.at[idx, 'p_value'] = p_value
+            for i, dist in enumerate(distances):
+                cancer_scores_df.at[idx, f'b_dist_{i+1}'] = dist
+
+            cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
+
+        print(f" ====== Completed permutation test for cancer: {os.path.basename(self.cancer_scores_file)} ======")
+
+    def _bootstrap_pathway(self, bg_gmm, bg_scores, num_samples):
+        """
+        Helper method to perform bootstrap sampling on the background scores.
+        """
+        distances = []
+        for i in range(self.n_permutations):
+            sampled_scores = np.random.choice(bg_scores, size=num_samples, replace=True)
+            scores_dict = {i: score for i, score in enumerate(sampled_scores)}
+
+            sampled_hist, bin_edges = PathwayAtlasResults.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+            sampled_gmm, _ = self.gmm_fitter.GMM_the_distribution(sampled_hist, bin_edges)
+
+            if sampled_gmm is None:
+                continue
+
+            distance = DistributionDistances.kl_divergence_from_gmms(bg_gmm, sampled_gmm, n_samples_mc=RANDOM_SAMPLE_NUM)
+            distances.append(distance)
+
+            if i % 100 == 0:
+                print(f"  Completed {i} / {self.n_permutations} permutations...")
+
+        return distances
+
+    @staticmethod
+    def _calculate_p_value(observed_distance, permuted_distances):
+        """
+        Calculates the p-value based on the observed distance and the distribution
+        of distances from permutations.
+
+        Args:
+            observed_distance (float): The distance calculated from the actual data.
+            permuted_distances (list): List of distances from permuted datasets.
+
+        Returns:
+            float: The p-value indicating the significance of the observed distance.
+        """
+        count_extreme = sum(1 for dist in permuted_distances if dist >= observed_distance)
+        p_value = (count_extreme + 1) / (len(permuted_distances) + 1)
+        return p_value
+
 
     # this might take forever to run, split to sarray jobs
     # def run_full_analysis(self, score_to_analyze: str, scoring_system: str,

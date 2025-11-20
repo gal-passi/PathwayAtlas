@@ -203,7 +203,7 @@ MICHAL_HN1_PSSM = {
 # "A>A": 0.999769779033996, "G>G": 0.999678160644895, "C>C": 0.999647773784267, , "T>T": 0.99975516762429
 
 BINS_NUM = 100
-RANDOM_SAMPLE_NUM = 10000
+RANDOM_SAMPLE_NUM = 1000        # original scores wih 10000
 GMM_COMPONENTS = 4
 
 
@@ -217,3 +217,10 @@ LOAD_OBJ_ERROR = 'Data missing or invalid for {}. ' \
 CON_ERR_FUS = "Connection Error in fetch_uniport_sequences while fetching isoforms for {}\nURL: "
 CON_ERR_GENERAL = "Connection Error in {} on protein {}"
 CON_ERR_UFN = "Connection Error in uid_from_name failed to fetch Uniprot IDs for protein {}"
+
+
+# PERMUTATION TEST
+
+BOOTSTRAP_SAMPLES = 1000
+P_VALUE_THRESHOLD = 0.05
+MIN_CANCER_SAMPLES = 20

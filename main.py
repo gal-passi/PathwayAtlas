@@ -1,4 +1,7 @@
+import sys
+
 from disorder_predictor import DisorderPredict
+from statistical_models import PermutationTest
 from utils import *
 
 import os
@@ -142,9 +145,6 @@ def create_llr_and_dis_scoring(kegg: KeggApi):
             print(f"Error processing {kegg_id}: {e}")
 
 
-<<<<<<< HEAD
-
-
 # if __name__ == '__main__':
 #     # Lab Notebook:
 #     #    https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
@@ -176,10 +176,25 @@ def create_llr_and_dis_scoring(kegg: KeggApi):
 #     print("Creating mutations scoring for all KEGG proteins...")
 #     create_llr_and_dis_scoring(kegg)
 
-=======
-if __name__ == '__main__':
+
+if (__name__ == '__main__'):
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
+    args = sys.argv[1:]
+    if len(args) < 1:
+        print("Usage: python main.py <cancer_name_mutations.csv>")
+        sys.exit(1)
+
+    cancer_mutations_file = args[0]
+    cancer_scores_path = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
+    cancer_scores_filename = pjoin(cancer_scores_path, cancer_mutations_file)
+
+    bg_scores_pathway = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/kegg/pathways/scores"
+
+    perm_tester = PermutationTest(bg_scores_pathway, cancer_scores_filename)
+    perm_tester.run_permutation_test()
+
+
     """
 >>>>>>> origin/master
 
@@ -209,7 +224,4 @@ if __name__ == '__main__':
     print("Creating LLR scoring for all KEGG proteins...")
     create_llr_scoring(kegg)
 """
-    # Step 6: Download cBioPortal data
-    # TODO: Lotem
-    get_studies()
->>>>>>> origin/master
+
