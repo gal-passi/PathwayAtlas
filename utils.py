@@ -186,15 +186,14 @@ def open_df_pickle(path: str) -> dict:
     return {}
 
 
-def sep_csv_files(lines_per_file: int, filename: str):
+def sep_csv_files(lines_per_file: int, path: str):
     """
     Separates a large CSV file into smaller CSV files, preserving headers.
     :param lines_per_file: int number of lines per file
-    :param filename: str path to the large CSV file
+    :param path: str path to the large CSV file
     :return: None
     """
-    base_path = os.path.join(CANCERS_PATH, filename)
-    with open(base_path, 'r', newline='', encoding='utf-8') as f:
+    with open(path, 'r', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         headers = next(reader)  # Read the headers
         rows = list(reader)
@@ -204,16 +203,12 @@ def sep_csv_files(lines_per_file: int, filename: str):
 
     for i in range(num_files):
         chunk_rows = rows[i * lines_per_file:(i + 1) * lines_per_file]
-        chunk_file_path = f"{base_path}_part{i + 1}.csv"
-        new_filename = f"{filename}_part{i + 1}.csv"
+        chunk_file_path = f"{path}_part{i + 1}.csv"
 
         with open(chunk_file_path, 'w', newline='', encoding='utf-8') as chunk_file:
             writer = csv.writer(chunk_file)
             writer.writerow(headers)  # Write the header to each new file
             writer.writerows(chunk_rows)  # Write the rows
-
-        print(new_filename)
-
 
 def merge_csv_parts(filename):
     """
@@ -423,6 +418,17 @@ class CbioApi:
                 for id, name in zip(study_ids, study_names):
                     file.write(f"{name} \t {id}\n")
         return study_ids, study_names
+
+    def get_cancer_type(self, cancer_short_name: str) -> str:
+        """
+        :param cancer_short_name: str abbreviated cancer type
+        :return: full cancer type name
+        """
+        all_types = self.api.Cancer_Types.getAllCancerTypesUsingGET().result()
+        for cancer_type in all_types:
+            if cancer_type.shortName.lower() == cancer_short_name:
+                return cancer_type.name
+        return ''
 
     @staticmethod
     def get_patient_age(study_id, patient_id):

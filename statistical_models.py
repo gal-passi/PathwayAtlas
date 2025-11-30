@@ -1,5 +1,7 @@
 from typing import List, Optional, Dict
 
+from biorun.ontology import print_node
+
 from definitions import *
 import pandas as pd
 from collections import defaultdict
@@ -9,7 +11,12 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import os
 import pickle
-from scipy.stats import wasserstein_distance
+from scipy.stats import wasserstein_distance, false_discovery_control
+import matplotlib.pyplot as plt
+import numpy as np
+import glob
+
+from utils import sep_csv_files
 
 
 class GMM:
@@ -745,6 +752,27 @@ class PermutationTest:
 
         cancer_scores_df = pd.read_csv(self.cancer_scores_file)
 
+        if 'p_value' in cancer_scores_df.columns:
+            print(f" ====== Starting FDR correction for cancer: {os.path.basename(self.cancer_scores_file)} ======")
+
+            col_to_drop = [col for col in cancer_scores_df.columns if col.startswith('is')]
+            cancer_scores_df.drop(columns=col_to_drop, inplace=True)
+
+            p_values = cancer_scores_df['p_value'].tolist()
+
+            reject05, corrected_p_values = self.calculate_q_value(p_values, alpha=0.05)
+            cancer_scores_df['q_value'] = corrected_p_values
+            cancer_scores_df['significant_0.05'] = reject05
+            reject01, _ = self.calculate_q_value(p_values, alpha=0.01)
+            cancer_scores_df['q_value'] = corrected_p_values
+            cancer_scores_df['significant_0.05'] = reject01
+
+
+            cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
+            return
+
+        print(f" ====== Starting permutation test for cancer: {os.path.basename(self.cancer_scores_file)} ======")
+
         for idx, row in cancer_scores_df.iterrows():
 
             pathway = row['pathway_name']
@@ -761,11 +789,11 @@ class PermutationTest:
                 continue
 
             bg_scores_df = pd.read_csv(pathway_bg_filename)
-            bg_scores = bg_scores_df['clinvar_reg_dis_ordered_prob'].dropna().tolist()
-            scores_dict = {i: score for i, score in enumerate(bg_scores)}
+            scores_dict = self.get_pathway_scores_background(bg_scores_df)
 
             # Fit GMM to the full background scores
-            bg_hist, bin_edges = PathwayAtlasResults.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+            bg_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+
             bg_gmm, _ = self.gmm_fitter.GMM_the_distribution(bg_hist, bin_edges)
             if bg_gmm is None:
                 print(f"GMM fitting failed for background scores of pathway {pathway}. Skipping.")
@@ -773,29 +801,24 @@ class PermutationTest:
 
             print(f" ====== Starting permutation test for pathway: {pathway} ======")
 
-            distances = self._bootstrap_pathway(bg_gmm, bg_scores, num_samples)
-            p_value = self._calculate_p_value(cancer_distance, distances)
+            distances = self._bootstrap_pathway(bg_gmm, bg_scores_df, num_samples)
+            p_value = self.calculate_p_value(cancer_distance, distances)
 
             print(f"Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
 
             cancer_scores_df.at[idx, 'p_value'] = p_value
-            for i, dist in enumerate(distances):
-                cancer_scores_df.at[idx, f'b_dist_{i+1}'] = dist
 
-            cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
 
-        print(f" ====== Completed permutation test for cancer: {os.path.basename(self.cancer_scores_file)} ======")
-
-    def _bootstrap_pathway(self, bg_gmm, bg_scores, num_samples):
+    def _bootstrap_pathway(self, bg_gmm, bg_scores_df, num_samples):
         """
         Helper method to perform bootstrap sampling on the background scores.
         """
         distances = []
         for i in range(self.n_permutations):
-            sampled_scores = np.random.choice(bg_scores, size=num_samples, replace=True)
-            scores_dict = {i: score for i, score in enumerate(sampled_scores)}
+            sampled_scores = bg_scores_df.sample(n=num_samples, replace=True, random_state=self.random_state + i)
+            scores_dict = self.get_pathway_scores_background(sampled_scores)
 
-            sampled_hist, bin_edges = PathwayAtlasResults.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+            sampled_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
             sampled_gmm, _ = self.gmm_fitter.GMM_the_distribution(sampled_hist, bin_edges)
 
             if sampled_gmm is None:
@@ -804,13 +827,13 @@ class PermutationTest:
             distance = DistributionDistances.kl_divergence_from_gmms(bg_gmm, sampled_gmm, n_samples_mc=RANDOM_SAMPLE_NUM)
             distances.append(distance)
 
-            if i % 100 == 0:
+            if i % 100 == 0 and i > 0:
                 print(f"  Completed {i} / {self.n_permutations} permutations...")
 
         return distances
 
     @staticmethod
-    def _calculate_p_value(observed_distance, permuted_distances):
+    def calculate_p_value(observed_distance, permuted_distances):
         """
         Calculates the p-value based on the observed distance and the distribution
         of distances from permutations.
@@ -823,8 +846,76 @@ class PermutationTest:
             float: The p-value indicating the significance of the observed distance.
         """
         count_extreme = sum(1 for dist in permuted_distances if dist >= observed_distance)
-        p_value = (count_extreme + 1) / (len(permuted_distances) + 1)
+        p_value = count_extreme  / len(permuted_distances)
+        p_value = max(0.0, min(1.0, float(p_value)))
+
         return p_value
+
+    @staticmethod
+    def calculate_q_value(p_values: list, alpha: float = 0.05) -> tuple:
+
+        """
+        Applies Benjamini-Hochberg FDR correction to a list of p-values.
+
+        Args:
+            p_values (list): List of p-values to correct.
+            alpha (float): Significance level for FDR correction.
+
+        Returns:
+            list: List of FDR-corrected p-values.
+        """
+        corrected_p_values = []
+        reject = []
+
+        for p in p_values:
+            if p < 0 or p > 1 or np.isnan(p):
+                corrected_p_values.append(np.nan)
+                reject.append(False)
+            else:
+                q = false_discovery_control(p, method='bh')
+                corrected_p_values.append(q)
+                r = q <= alpha
+                reject.append(r)
+
+        return reject, corrected_p_values
+
+
+    @staticmethod
+    def get_pathway_scores_background(pathway_df) -> dict:
+        """
+        Collects mutation scores from the pathway's genes, categorized by
+        mutation type (e.g., 'A>C') and then by score type.
+
+        Returns
+        -------
+        dict
+            A nested dictionary: {mut_type: {score_type: [scores]}}.
+            Example: {"A>C": {"esm_log_probs": [0.1, 0.2], ...}, ...}
+        """
+        if pathway_df.empty:
+            return {}
+
+        background_scores = defaultdict(lambda: defaultdict(list))
+
+        # Check for essential columns in the pre-aggregated CSV
+        required_cols = {"Ref", "Alt"}
+        if not required_cols.issubset(pathway_df.columns):
+            print("Warning: 'Ref' or 'Alt' columns missing in pathway scores file")
+            return {}
+
+        score_types = ['esm_log_probs', 'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob']
+
+        # Efficiently iterate over the single, preloaded DataFrame
+        for _, row in pathway_df.iterrows():
+            mut_type = f"{str(row['Ref']).upper()}>{str(row['Alt']).upper()}"
+
+            for score_type in score_types:
+                # Check if score exists and is not NaN
+                if score_type in row and pd.notna(row[score_type]):
+                    background_scores[mut_type][score_type].append(float(row[score_type]))
+
+        # Convert default dicts to regular dicts for a clean return value
+        return {mut: dict(scores) for mut, scores in background_scores.items()}
 
 
     # this might take forever to run, split to sarray jobs
