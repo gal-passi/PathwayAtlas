@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from esm import pretrained      # for model choosing and alphabet
 from cbio import *
+from process_results import summarize_results
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
@@ -191,7 +192,7 @@ if (__name__ == '__main__'):
     bg_scores_pathway = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/kegg/pathways/scores"
 
     cbio = CbioApi()
-    process_results(cbio)
+    summarize_results(cbio)
 
     """
 >>>>>>> origin/master

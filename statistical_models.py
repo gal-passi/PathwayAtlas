@@ -446,16 +446,16 @@ class CancerPathwayScoring:
         if self.cancer_df.empty or not pathway_gene_ids:
             return {}, 0  # Return count of 0
 
-        required_cols = {'KeggId', 'Ref', 'Alt'}
+        required_cols = {KEGG_COL, 'Ref', 'Alt'}
         if not required_cols.issubset(self.cancer_df.columns):
             return {}, 0  # Return count of 0
 
-        relevant_df = self.cancer_df.dropna(subset=['KeggId', 'Ref', 'Alt']).copy()
+        relevant_df = self.cancer_df.dropna(subset=[KEGG_COL, 'Ref', 'Alt']).copy()
 
         def is_in_pathway(kegg_id_cell: str) -> bool:
             return any(gid in pathway_gene_ids for gid in str(kegg_id_cell).split(','))
 
-        mask = relevant_df['KeggId'].apply(is_in_pathway)
+        mask = relevant_df[KEGG_COL].apply(is_in_pathway)
         pathway_cancer_mutations = relevant_df[mask]
 
         mutation_count = len(pathway_cancer_mutations)
@@ -752,25 +752,6 @@ class PermutationTest:
 
         cancer_scores_df = pd.read_csv(self.cancer_scores_file)
 
-        if 'p_value' in cancer_scores_df.columns:
-            print(f" ====== Starting FDR correction for cancer: {os.path.basename(self.cancer_scores_file)} ======")
-
-            col_to_drop = [col for col in cancer_scores_df.columns if col.startswith('is')]
-            cancer_scores_df.drop(columns=col_to_drop, inplace=True)
-
-            p_values = cancer_scores_df['p_value'].tolist()
-
-            reject05, corrected_p_values = self.calculate_q_value(p_values, alpha=0.05)
-            cancer_scores_df['q_value'] = corrected_p_values
-            cancer_scores_df['significant_0.05'] = reject05
-            reject01, _ = self.calculate_q_value(p_values, alpha=0.01)
-            cancer_scores_df['q_value'] = corrected_p_values
-            cancer_scores_df['significant_0.05'] = reject01
-
-
-            cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
-            return
-
         print(f" ====== Starting permutation test for cancer: {os.path.basename(self.cancer_scores_file)} ======")
 
         for idx, row in cancer_scores_df.iterrows():
@@ -799,14 +780,20 @@ class PermutationTest:
                 print(f"GMM fitting failed for background scores of pathway {pathway}. Skipping.")
                 continue
 
-            print(f" ====== Starting permutation test for pathway: {pathway} ======")
+            print(f"  Bootstrapping pathway: {pathway}")
 
             distances = self._bootstrap_pathway(bg_gmm, bg_scores_df, num_samples)
-            p_value = self.calculate_p_value(cancer_distance, distances)
+            p_value = self._calculate_p_value(cancer_distance, distances)
 
-            print(f"Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
+            print(f"  Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
 
             cancer_scores_df.at[idx, 'p_value'] = p_value
+
+            print(f"  Starting FDR correction for cancer: {os.path.basename(self.cancer_scores_file)}")
+
+            self._perform_fdr_correction(self, cancer_scores_df, alphas=[0.05, 0.01])
+
+        cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
 
 
     def _bootstrap_pathway(self, bg_gmm, bg_scores_df, num_samples):
@@ -828,12 +815,21 @@ class PermutationTest:
             distances.append(distance)
 
             if i % 100 == 0 and i > 0:
-                print(f"  Completed {i} / {self.n_permutations} permutations...")
+                print(f"    Completed {i} / {self.n_permutations} permutations...")
 
         return distances
 
+    def _perform_fdr_correction(self, cancer_scores_df: pd.DataFrame, alphas=None) -> None:
+        if alphas is None:
+            alphas = [0.05]
+        p_values = cancer_scores_df['p_value'].tolist()
+        for alpha in alphas:
+            reject, corrected_p_values = self._calculate_q_value(p_values, alpha=alpha)
+            cancer_scores_df['q_value'] = corrected_p_values
+            cancer_scores_df[f'significant_{alpha}'] = reject
+
     @staticmethod
-    def calculate_p_value(observed_distance, permuted_distances):
+    def _calculate_p_value(observed_distance, permuted_distances):
         """
         Calculates the p-value based on the observed distance and the distribution
         of distances from permutations.
@@ -852,7 +848,7 @@ class PermutationTest:
         return p_value
 
     @staticmethod
-    def calculate_q_value(p_values: list, alpha: float = 0.05) -> tuple:
+    def _calculate_q_value(p_values: list, alpha: float = 0.05) -> tuple:
 
         """
         Applies Benjamini-Hochberg FDR correction to a list of p-values.
