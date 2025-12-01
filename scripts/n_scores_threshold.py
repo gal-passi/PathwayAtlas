@@ -17,8 +17,8 @@ except NameError:
 
 
 # Define paths
-input_root_dir = "./results and graphs/scores"
-output_dir = "./results and graphs/n_scores_threshold"
+input_root_dir = "./results_and_graphs/scores"
+output_dir = "./results_and_graphs/n_scores_threshold"
 
 # Create the output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)

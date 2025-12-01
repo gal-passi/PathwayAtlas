@@ -39,7 +39,7 @@
 #     ]
 #
 #     # Define the output directory for the plots
-#     output_directory = './results and graphs/plots_corr'
+#     output_directory = './results_and_graphs/plots_corr'
 #
 #     # Create the output directory if it doesn't exist
 #     os.makedirs(output_directory, exist_ok=True)
@@ -156,7 +156,7 @@ def create_colored_scatter_plot():
     ]
 
     # Define the output directory for the plot
-    output_directory = './results and graphs/plots_corr'
+    output_directory = './results_and_graphs/plots_corr'
 
     # Create the output directory if it doesn't exist
     os.makedirs(output_directory, exist_ok=True)
