@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from esm import pretrained      # for model choosing and alphabet
 from cbio import *
-from process_results import add_statistics_to_excel
+from process_results import add_statistics_to_excel, summarize_results_all_cancers
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
@@ -181,15 +181,21 @@ def create_llr_and_dis_scoring(kegg: KeggApi):
 if (__name__ == '__main__'):
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
-    # args = sys.argv[1:]
-    # if len(args) < 1:
-    #     print("Usage: python main.py <cancer_name_mutations.csv>")
-    #     sys.exit(1)
+    args = sys.argv[1:]
+    if len(args) < 2:
+        print("Usage: python main.py <cancer_name_mutations.csv>")
+        sys.exit(1)
+
+    cancer_file = args[0]
+    distance_metric = args[1]
 
     cbio = CbioApi()
-    excel_path = os.path.join("results_and_graphs/pathway_analysis_combined_for_michal.xlsx")
-    add_statistics_to_excel(cbio, excel_path)
-
+    # excel_path = os.path.join("results_and_graphs/pathway_analysis_combined_for_michal.xlsx")
+    # add_statistics_to_excel(cbio, excel_path)
+    # summarize_results_all_cancers(cbio)
+    perm_tester = PermutationTest(cancer_file)
+    print("Performing permutation test and FDR correction...")
+    perm_tester.run_permutation_test(distance_metric)
 
     """
 >>>>>>> origin/master

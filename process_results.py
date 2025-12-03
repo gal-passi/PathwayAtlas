@@ -80,6 +80,7 @@ class CancerResultsAnalyzer:
             'num_unique_mutations': num_unique_mutations,
             'num_samples_used': num_samples,
             'num_patients_used': num_patients,
+            'num_proteins_used': merged_sub_df[PROTEIN_NAME_COL].nunique(),
             'significant_pathways_0.01': num_significant_01,
             'significant_pathways_0.05': num_significant_05
         }
@@ -90,9 +91,9 @@ def summarize_results_all_cancers(cbio: CbioApi) -> None:
     Summarize the number of significant pathways for each cancer type and save to a new CSV.
     @param cbio: cBioPortal API object
     """
-    all_files = glob.glob(pjoin(CANCER_PATHWAY_RESULTS, "*.csv"))
+    all_files = glob.glob(pjoin(CANCER_SCORES_KL_PATH, "*.csv"))
     if not all_files:
-        print(f"No result CSV files found in the specified directory: {CANCER_PATHWAY_RESULTS}")
+        print(f"No result CSV files found in the specified directory: {CANCER_SCORES_KL_PATH}")
         return
 
     rows = []
@@ -111,9 +112,9 @@ def summarize_results_all_cancers(cbio: CbioApi) -> None:
 
 def add_statistics_to_excel(cbio: CbioApi, xl_file: str):
     sheets = pd.read_excel(xl_file, sheet_name=None)
-    all_files = glob.glob(pjoin(CANCER_PATHWAY_RESULTS, "*.csv"))
+    all_files = glob.glob(pjoin(CANCER_SCORES_KL_PATH, "*.csv"))
     if not all_files:
-        print(f"No result CSV files found in the specified directory: {CANCER_PATHWAY_RESULTS}")
+        print(f"No result CSV files found in the specified directory: {CANCER_SCORES_KL_PATH}")
         return
 
     updated_sheets = {}

@@ -41,7 +41,7 @@ PATHWAY_SCORES_PATH = pjoin(KEGG_PATHWAYS_PATH, 'scores')
 RESULTS_PATH = './results and graphs'
 SCORES_RESULTS_PATH = pjoin(RESULTS_PATH, 'scores')
 
-CANCER_PATHWAY_RESULTS = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
+CANCER_SCORES_KL_PATH = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
 CANCER_CSVS_MUTATIONS = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
 LOTEM_RESULTS_PATH = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/results_and_graphs"
 
@@ -223,6 +223,6 @@ CON_ERR_UFN = "Connection Error in uid_from_name failed to fetch Uniprot IDs for
 
 # PERMUTATION TEST
 
-BOOTSTRAP_SAMPLES = 1000
+BOOTSTRAP_SAMPLES = 2000
 P_VALUE_THRESHOLDS = [0.05, 0.01, 0.001]
 MIN_CANCER_SAMPLES = 100
