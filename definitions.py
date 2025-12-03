@@ -87,7 +87,7 @@ FAMANALYSIS_COLUMNS = ['Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'
 CBIO_API_URL = 'https://www.cbioportal.org/api/v2/api-docs'
 MISSENSE_MUTATION = 'Missense_Mutation'
 CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
-CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
+#CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
 STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'StudyId', 'RefDNA']
 # exclude only on patient key and protein change to avoid problems with hg19/hg18
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']

@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 
 from definitions import *
 import pandas as pd
@@ -414,6 +414,57 @@ class DistributionDistances:
         # Final weighted sum
         return np.sum(np.exp(log_weights_p) * (log_p_approx - log_q_approx))
 
+    @staticmethod
+    def directional_wasserstein_from_hist(counts_bg: np.ndarray, counts_cancer: np.ndarray,
+                                          bin_edges: np.ndarray) -> tuple[float, float]:
+        """
+        Calculates both the 1-Wasserstein distance (Magnitude) and the Net Mass Shift (Direction)
+        using the Cumulative Distribution Function (CDF) approach.
+
+        Args:
+            counts_bg (np.ndarray): Bin densities for the Background distribution.
+            counts_cancer (np.ndarray): Bin densities for the Cancer distribution.
+            bin_edges (np.ndarray): The edges of the histogram bins.
+
+        Returns:
+            tuple[float, float]: (distance, shift)
+                - distance: Standard Wasserstein distance (always >= 0).
+                - shift: The net displacement vector.
+                         (+) Positive: Cancer shifted RIGHT (More Pathogenic).
+                         (-) Negative: Cancer shifted LEFT (More Benign).
+        """
+        if len(counts_bg) != len(counts_cancer):
+            raise ValueError("Input histogram count arrays must have the same length.")
+
+        # 1. Calculate Bin Widths
+        # Since np.histogram(density=True) returns height, Mass = Height * Width
+        bin_widths = np.diff(bin_edges)
+
+        # 2. Calculate Probability Mass per bin
+        # (This handles non-uniform bin sizes correctly)
+        pmf_bg = counts_bg * bin_widths
+        pmf_cancer = counts_cancer * bin_widths
+
+        # 3. Calculate Cumulative Distribution Functions (CDFs)
+        cdf_bg = np.cumsum(pmf_bg)
+        cdf_cancer = np.cumsum(pmf_cancer)
+
+        # 4. Calculate Difference
+        # Logic: If Background is Left (Benign) and Cancer is Right (Pathogenic),
+        # The Background CDF rises to 1.0 *before* the Cancer CDF.
+        # Therefore (CDF_bg - CDF_cancer) is Positive.
+        diff_cdf = cdf_bg - cdf_cancer
+
+        # 5. Integrate over the domain
+        # Magnitude (Standard Wasserstein)
+        w_distance = np.sum(np.abs(diff_cdf) * bin_widths)
+
+        # Direction (Net Mass Shift)
+        w_shift = np.sum(diff_cdf * bin_widths)
+
+        return w_distance, w_shift
+
+
 
 
 
@@ -424,8 +475,8 @@ class CancerPathwayScoring:
     Analyzes and compares mutation scores between a KEGG pathway (background model)
     and a specific cancer type's mutation dataset.
     """
-
-    def __init__(self, pathway_dict_path: str, pathway_scores_csv_path: str, cancer_csv_path: str):
+    def __init__(self, pathway_dict_path: str, pathway_scores_csv_path: str,
+                 cancer_data: Union[str, pd.DataFrame]):
         """
         Initializes the scoring object by loading pathway and cancer data.
 
@@ -435,17 +486,17 @@ class CancerPathwayScoring:
             File path to the pickled pathway dictionary. Used to get the list of gene IDs.
         pathway_scores_csv_path : str
             File path to the pre-aggregated CSV with all background scores for the pathway.
-        cancer_csv_path : str
-            File path to the CSV with scored cancer mutations.
+        cancer_data : Union[str, pd.DataFrame]
+            Either a file path (str) to the CSV with scored cancer mutations,
+            OR a pre-loaded pandas DataFrame. Passing the DataFrame directly
+            avoids repeated I/O when processing multiple pathways for the same cancer.
         """
         self.pathway_dict_path = pathway_dict_path
         self.pathway_scores_csv_path = pathway_scores_csv_path
-        self.cancer_csv_path = cancer_csv_path
         self.pssm = MICHAL_HN1_PSSM  # Using the predefined PSSM for weighting
         self.gmm_fitter = GMM()  # GMM helper instance for fitting models
 
-        # --- MODIFICATION 1: Load both pathway definition and pathway scores ---
-        # Load the pickle file to get the definitive list of gene IDs
+        # 1. Load Pathway Definition (Pickle)
         try:
             with open(self.pathway_dict_path, 'rb') as f:
                 self.pathway_dict = pickle.load(f)
@@ -453,18 +504,28 @@ class CancerPathwayScoring:
             print(f"[Error] Could not load pathway dictionary {self.pathway_dict_path}: {e}")
             self.pathway_dict = {}
 
-        # Load the pre-aggregated CSV with all background scores
+        # 2. Load Pathway Background Scores (CSV)
         try:
             self.pathway_df = pd.read_csv(self.pathway_scores_csv_path)
         except FileNotFoundError:
             print(f"[Error] Pathway scores CSV not found: {self.pathway_scores_csv_path}")
             self.pathway_df = pd.DataFrame()
 
-        # Load cancer data (no change here)
-        try:
-            self.cancer_df = pd.read_csv(self.cancer_csv_path)
-        except FileNotFoundError:
-            print(f"[Error] Cancer CSV file not found: {self.cancer_csv_path}")
+        # 3. Load or Assign Cancer Data
+        if isinstance(cancer_data, pd.DataFrame):
+            # Optimization: Use pre-loaded DataFrame
+            self.cancer_df = cancer_data
+            self.cancer_csv_path = "Pre-loaded DataFrame"
+        elif isinstance(cancer_data, str):
+            # Standard: Load from CSV path
+            self.cancer_csv_path = cancer_data
+            try:
+                self.cancer_df = pd.read_csv(self.cancer_csv_path)
+            except FileNotFoundError:
+                print(f"[Error] Cancer CSV file not found: {self.cancer_csv_path}")
+                self.cancer_df = pd.DataFrame()
+        else:
+            print(f"[Error] Invalid input for cancer_data: {type(cancer_data)}. Must be str or pd.DataFrame.")
             self.cancer_df = pd.DataFrame()
 
     def get_pathway_genes_id(self) -> set:
@@ -668,15 +729,40 @@ class CancerPathwayScoring:
 
         return w_distance
 
-        # =========================================================================
-        # UPDATED PLOTTING FUNCTION
-        # =========================================================================
+    def calculate_directional_wasserstein(self, background_scores: dict, cancer_scores: dict,
+                                          score_type: str = "clinvar_reg_dis_ordered_prob") -> tuple[float, float]:
+        """
+        Calculates the 1-Wasserstein distance AND the directional shift.
+
+        Returns:
+            tuple: (distance, shift)
+            - distance: Magnitude of change (0 to 1).
+            - shift: Direction. (+) is Pathogenic shift, (-) is Benign shift.
+        """
+        # 1. Get the distributions from the helper method
+        bg_dist, bin_edges, cancer_dist = self.get_bins_of_distributions_ready(
+            background_scores, cancer_scores, score_type
+        )
+
+        # Check for empty distributions
+        if np.sum(bg_dist) == 0 or np.sum(cancer_dist) == 0:
+            print(f"Warning: Empty distribution for '{score_type}'. Cannot calculate distance.")
+            return None, None
+
+        # 2. Calculate Directional Wasserstein
+        w_distance, w_shift = DistributionDistances.directional_wasserstein_from_hist(
+            bg_dist, cancer_dist, bin_edges
+        )
+
+        return w_distance, w_shift
+
+    # =========================================================================
+    #  PLOTTING FUNCTION
+    # =========================================================================
     def plot_pathway_distribution_comparison(self,
-                                             pathway_name: str,
-                                             cancer_name: str,
-                                             stats_data: dict,  # <--- CHANGED: Pass dict directly
-                                             background_scores: dict,
-                                             cancer_scores: dict,
+                                             pathway_name: str, cancer_name: str,
+                                             stats_data: dict,
+                                             background_scores: dict, cancer_scores: dict,
                                              score_type: str = "clinvar_reg_dis_ordered_prob"):
         """
         Plots the Background vs Cancer distributions with stats passed directly.
@@ -744,6 +830,8 @@ class CancerPathwayScoring:
             n_str, q_str, d_str = str(n_val), str(q_val), str(dist_val)
 
         stats_text = (f"KL Dist: {d_str}\n"
+                      # TODO comment out this line
+                      f"DW Dist: {DistributionDistances.directional_wasserstein_from_hist(bg_dist, cancer_dist, bin_edges)[1]:.4f}\n"
                       f"n: {n_str}\n"
                       f"q-value: {q_str}")
 
@@ -768,7 +856,7 @@ class CancerPathwayScoring:
         ax.legend(handles=legend_elements, loc='upper left', fontsize=8)
 
         # Saving
-        base_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/dist_plots_all_cancer_pathway"
+        base_dir = pjoin(RESULTS_PATH, "dist_plots_all_cancer_pathway")
         save_dir = os.path.join(base_dir, cancer_name)
         os.makedirs(save_dir, exist_ok=True)
 
@@ -828,6 +916,7 @@ class PathwayAtlasResults:
         distance_calculators = {
             "kl_divergence": analyzer.calculate_distance_gmm_kl_d,
             "wasserstein": analyzer.calculate_distance_wasserstein,
+            "dw_distance": analyzer.calculate_directional_wasserstein
         }
         calculator = distance_calculators.get(scoring_system)
         if calculator:
@@ -885,7 +974,7 @@ class PathwayAtlasResults:
                 analyzer = CancerPathwayScoring(
                     pathway_dict_path=pathway_dict_filepath,
                     pathway_scores_csv_path=pathway_scores_filepath,
-                    cancer_csv_path=cancer_file_path
+                    cancer_data=cancer_file_path
                 )
 
                 # Get the score dictionaries. The background one is now loaded very fast.
@@ -894,17 +983,32 @@ class PathwayAtlasResults:
 
                 # Proceed only if both datasets contain relevant data
                 if background_scores and cancer_scores:
-                    distance = self._calculate_distance(analyzer, scoring_system,
+                    distance_result = self._calculate_distance(analyzer, scoring_system,
                                                         background_scores, cancer_scores,
                                                         score_to_analyze)
-                    if distance is not None:
-                        # Store the result: { "hsa04010.pickle": ... }
-                        # Store a dictionary with both distance and count
-                        self.results[cancer_name][pathway_dict_filename] = {
-                            'distance': distance,
-                            'n': mutation_count
-                        }
-                        print(f"--> Success! Distance ({scoring_system}): {distance:.4f}   (n={mutation_count})")
+                    if distance_result is not None:
+                        # --- START OF FIX ---
+
+                        result_data = {'n': mutation_count}
+
+                        if isinstance(distance_result, tuple) and len(distance_result) == 2:
+                            # It's the directional Wasserstein (dw_distance)
+                            distance, shift = distance_result
+                            result_data['distance'] = distance
+                            result_data['dw_shift'] = shift
+
+                            # Print with two separate floats
+                            print(f"--> Success! DW-Dist: {distance:.4f}, Shift: {shift:.4f} (n={mutation_count})")
+                        else:
+                            # It's a standard float distance (kl_divergence or wasserstein)
+                            distance = distance_result
+                            result_data['distance'] = distance
+
+                            # Print with one float
+                            print(f"--> Success! Distance ({scoring_system}): {distance:.4f} (n={mutation_count})")
+
+                        # Store the cleaned dictionary
+                        self.results[cancer_name][pathway_dict_filename] = result_data
                 else:
                     # Provide a clear reason for skipping
                     print(f"--> Analysis skipped.")
@@ -999,7 +1103,7 @@ class PathwayAtlasResults:
                 analyzer = CancerPathwayScoring(
                     pathway_dict_path=pathway_dict_filepath,
                     pathway_scores_csv_path=pathway_scores_filepath,
-                    cancer_csv_path=cancer_file_path
+                    cancer_data=cancer_file_path
                 )
 
                 # Load Scores
@@ -1013,7 +1117,7 @@ class PathwayAtlasResults:
                     analyzer.plot_pathway_distribution_comparison(
                         pathway_name=base_name,
                         cancer_name=cancer_name,
-                        stats_data=current_stats,  # <--- Passing the dict here
+                        stats_data=current_stats,
                         background_scores=background_scores,
                         cancer_scores=cancer_scores,
                         score_type=score_to_analyze

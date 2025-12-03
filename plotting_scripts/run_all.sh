@@ -20,7 +20,10 @@ ARRAY_MAX=$((NUM_CANCER_FILES - 1))
 
 # Submit jobs
 
-echo "Submitting PLOTTING jobs for: Score=clinvar_reg_dis_ordered_prob, System=kl_divergence"
-sbatch --array=0-${ARRAY_MAX} submit_plotting_jobs.slurm "clinvar_reg_dis_ordered_prob" "kl_divergence"
+#echo "Submitting PLOTTING jobs for: Score=clinvar_reg_dis_ordered_prob, System=kl_divergence"
+#sbatch --array=0-${ARRAY_MAX} submit_plotting_jobs.slurm "clinvar_reg_dis_ordered_prob" "kl_divergence"
+
+echo "Submitting PLOTTING jobs for: Score=clinvar_reg_dis_ordered_prob, System=dw_distance"
+sbatch --array=0-${ARRAY_MAX} submit_plotting_jobs.slurm "clinvar_reg_dis_ordered_prob" "dw_distance"
 
 echo "--- All plotting job arrays submitted. ---"

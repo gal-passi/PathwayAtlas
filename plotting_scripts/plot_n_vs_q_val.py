@@ -35,7 +35,7 @@ mpl.rcParams['legend.frameon'] = False
 # 2. DATA LOADING
 # ==========================================
 
-folder_path = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
+folder_path = "/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
 file_pattern = os.path.join(folder_path, "*.csv")
 files = glob.glob(file_pattern)
 
@@ -60,6 +60,7 @@ if not data_frames:
 df = pd.concat(data_frames, ignore_index=True)
 
 df = df[df['n'] <= 150]
+#df = df[df['q_value'] <= 0.01]
 
 x = df['n']
 y = df['q_value']
@@ -126,9 +127,8 @@ plt.tight_layout()
 # 6. SAVING
 # ==========================================
 
-output_path = os.path.join("/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs", "aggregated_n_vs_pvalue_density.pdf")
+output_path = os.path.join("/results_and_graphs", "aggregated_n_vs_pvalue_density_q_value.pdf")
 # Save as PDF (vector graphics) is preferred for publication
-plt.savefig(output_path, format='pdf', dpi=300, bbox_inches='tight')
 # Also save a high-res PNG for quick viewing
 plt.savefig(output_path.replace('.pdf', '.png'), format='png', dpi=300, bbox_inches='tight')
 

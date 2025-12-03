@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pathway_plotting
-#SBATCH --time=48:00:00
-#SBATCH --mem=8G
+#SBATCH --time=24:00:00
+#SBATCH --mem=10G
 #SBATCH --killable
 #SBATCH --ntasks=1
 #SBATCH --requeue

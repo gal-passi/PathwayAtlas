@@ -22,7 +22,7 @@ mpl.rcParams['legend.frameon'] = False
 # ==========================================
 # 2. DATA LOADING
 # ==========================================
-folder_path = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
+folder_path = "/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
 file_pattern = os.path.join(folder_path, "*.csv")
 files = glob.glob(file_pattern)
 
@@ -37,6 +37,7 @@ cols_to_use = [
     'q_value',
     'significant_0.05',
     'significant_0.01'
+    # TODO , significant_0.001'
 ]
 
 for file in files:
@@ -142,11 +143,11 @@ def plot_recurrence_faceted(dataframe, threshold, output_folder, items_per_row=9
 # 4. EXECUTION
 # ==========================================
 
-output_dir = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/plots_cancer_count_per_pathway_significant"
+output_dir = "/results_and_graphs/plots_cancer_count_per_pathway_significant"
 os.makedirs(output_dir, exist_ok=True)
 
 # We include 0.05, 0.01 (using columns) and 0.001 (fallback to p-value)
-thresholds_to_plot = [0.05, 0.01]
+thresholds_to_plot = [0.05, 0.01]       # TODO run also with 0.001 when have the q-val column
 
 for thresh in thresholds_to_plot:
     plot_recurrence_faceted(full_df, thresh, output_dir, items_per_row=100)
