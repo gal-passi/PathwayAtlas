@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from esm import pretrained      # for model choosing and alphabet
 from cbio import *
-from process_results import summarize_results
+from process_results import add_statistics_to_excel
 
 def init_kegg_genome(recalc=False):
     """Initialize KEGG genome by creating KeggGene objects for all genes in KEGG database."""
@@ -185,14 +185,11 @@ if (__name__ == '__main__'):
     # if len(args) < 1:
     #     print("Usage: python main.py <cancer_name_mutations.csv>")
     #     sys.exit(1)
-    #
-    # cancer_mutations_file = args[0]
-    cancer_scores_path = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
-
-    bg_scores_pathway = "/cs/labs/dina/ophirmil12/PathwayAtlas/data/kegg/pathways/scores"
 
     cbio = CbioApi()
-    summarize_results(cbio)
+    excel_path = os.path.join("results_and_graphs/pathway_analysis_combined_for_michal.xlsx")
+    add_statistics_to_excel(cbio, excel_path)
+
 
     """
 >>>>>>> origin/master

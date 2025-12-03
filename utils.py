@@ -430,6 +430,17 @@ class CbioApi:
                 return cancer_type.name
         return ''
 
+    def get_cancer_short_name(self, cancer_type: str) -> str:
+        """
+        :param cancer_type: str full cancer type name
+        :return: abbreviated cancer type name
+        """
+        all_types = self.api.Cancer_Types.getAllCancerTypesUsingGET().result()
+        for cancer_t in all_types:
+            if cancer_t.name.lower() == cancer_type.lower():
+                return cancer_t.shortName
+        return ''
+
     @staticmethod
     def get_patient_age(study_id, patient_id):
         url = f"{CBIO_BASE_URL}/studies/{study_id}/patients/{patient_id}/clinical-data"

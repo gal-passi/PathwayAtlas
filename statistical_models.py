@@ -748,7 +748,7 @@ class PermutationTest:
 
         np.random.seed(random_state)
 
-    def run_permutation_test(self):
+    def run_permutation_test(self, distance_metric: str = "kl_divergence"):
 
         cancer_scores_df = pd.read_csv(self.cancer_scores_file)
 
@@ -764,42 +764,48 @@ class PermutationTest:
                 cancer_scores_df.drop(idx, inplace=True)
                 continue
 
-            pathway_bg_filename = pjoin(self.bg_scores_pathway, f"{pathway}.csv")
-            if not os.path.exists(pathway_bg_filename):
-                print(f"Background scores file not found for pathway {pathway}. Skipping.")
-                continue
+            if 'p_value' not in cancer_scores_df.columns:
 
-            bg_scores_df = pd.read_csv(pathway_bg_filename)
-            scores_dict = self.get_pathway_scores_background(bg_scores_df)
+                print(f"  Adding 'p_value' column to the results DataFrame.")
 
-            # Fit GMM to the full background scores
-            bg_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+                pathway_bg_filename = pjoin(self.bg_scores_pathway, f"{pathway}.csv")
+                if not os.path.exists(pathway_bg_filename):
+                    print(f"Background scores file not found for pathway {pathway}. Skipping.")
+                    continue
 
-            bg_gmm, _ = self.gmm_fitter.GMM_the_distribution(bg_hist, bin_edges)
-            if bg_gmm is None:
-                print(f"GMM fitting failed for background scores of pathway {pathway}. Skipping.")
-                continue
+                bg_scores_df = pd.read_csv(pathway_bg_filename)
+                scores_dict = self.get_pathway_scores_background(bg_scores_df)
 
-            print(f"  Bootstrapping pathway: {pathway}")
+                print(f"  Bootstrapping pathway: {pathway}")
 
-            distances = self._bootstrap_pathway(bg_gmm, bg_scores_df, num_samples)
-            p_value = self._calculate_p_value(cancer_distance, distances)
+                if distance_metric == "kl_divergence":
+                    distances = self._bootstrap_kl_divergence(scores_dict, bg_scores_df, num_samples)
 
-            print(f"  Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
+                p_value = self._calculate_p_value(cancer_distance, distances)
 
-            cancer_scores_df.at[idx, 'p_value'] = p_value
+                print(f"  Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
+
+                cancer_scores_df.at[idx, 'p_value'] = p_value
 
             print(f"  Starting FDR correction for cancer: {os.path.basename(self.cancer_scores_file)}")
 
-            self._perform_fdr_correction(self, cancer_scores_df, alphas=[0.05, 0.01])
+            self._perform_fdr_correction(self, cancer_scores_df, alphas=P_VALUE_THRESHOLDS)
 
         cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
 
 
-    def _bootstrap_pathway(self, bg_gmm, bg_scores_df, num_samples):
+    def _bootstrap_kl_divergence(self, scores_dict, bg_scores_df, num_samples):
         """
         Helper method to perform bootstrap sampling on the background scores.
         """
+        bg_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+
+        bg_gmm, _ = self.gmm_fitter.GMM_the_distribution(bg_hist, bin_edges)
+
+        if bg_gmm is None:
+            print(f"GMM fitting failed for background scores of pathway.")
+            return []
+
         distances = []
         for i in range(self.n_permutations):
             sampled_scores = bg_scores_df.sample(n=num_samples, replace=True, random_state=self.random_state + i)

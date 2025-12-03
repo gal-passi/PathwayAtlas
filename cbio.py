@@ -247,5 +247,3 @@ def add_seq_to_df(df: pd.DataFrame) -> pd.DataFrame:
         df.at[idx, KEGG_COL] = kegg_id
 
     return df
-
-
