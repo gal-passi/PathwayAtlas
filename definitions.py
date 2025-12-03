@@ -38,7 +38,7 @@ CANCER_READY_EMBEDDINGS_PATH = pjoin(CBIO_PATH, "emb")
 CANCER_READY_DISORDER_PATH = pjoin(CBIO_PATH, "disorder_scores")
 CLINVAR_MODELS_PATH = pjoin(DB, 'clinvar_models')
 PATHWAY_SCORES_PATH = pjoin(KEGG_PATHWAYS_PATH, 'scores')
-RESULTS_PATH = './results_and_graphs'
+RESULTS_PATH = './results and graphs'
 SCORES_RESULTS_PATH = pjoin(RESULTS_PATH, 'scores')
 
 CANCER_PATHWAY_RESULTS = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
