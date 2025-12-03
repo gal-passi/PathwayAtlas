@@ -1,5 +1,7 @@
 from typing import Optional, Dict, Union
 
+from biorun.ontology import print_node
+
 from definitions import *
 import pandas as pd
 from collections import defaultdict
@@ -9,6 +11,12 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import os
 import pickle
+from scipy.stats import wasserstein_distance, false_discovery_control
+import matplotlib.pyplot as plt
+import numpy as np
+import glob
+
+from utils import sep_csv_files
 from scipy.stats import wasserstein_distance
 from scipy.special import logsumexp
 from matplotlib.lines import Line2D
@@ -35,11 +43,16 @@ class GMM:
         gmm = GaussianMixture(
             n_components=n_components,
             random_state=random_state,
+            init_params='random',   # only for bootstrap
+            tol=1e-3,    # only for bootstrap
+            max_iter=50, # only for bootstrap
+            n_init=1,    # only for bootstrap
             covariance_type='full'
         )
         gmm.fit(reconstructed_data)
 
-        bic = gmm.bic(reconstructed_data)
+        #bic = gmm.bic(reconstructed_data)
+        bic = None
         return gmm, bic
 
     def GMM_bic_curve(self, joint_distribution, bin_edges, max_components=10,
@@ -227,8 +240,6 @@ class GMM:
             print(f"Successfully saved distribution for {pathway_id} to {file_path}")
         except Exception as e:
             print(f"Error saving distribution for {pathway_id}: {e}")
-
-
 
 
 class DistributionDistances:
@@ -586,16 +597,16 @@ class CancerPathwayScoring:
         if self.cancer_df.empty or not pathway_gene_ids:
             return {}, 0  # Return count of 0
 
-        required_cols = {'KeggId', 'Ref', 'Alt'}
+        required_cols = {KEGG_COL, 'Ref', 'Alt'}
         if not required_cols.issubset(self.cancer_df.columns):
             return {}, 0  # Return count of 0
 
-        relevant_df = self.cancer_df.dropna(subset=['KeggId', 'Ref', 'Alt']).copy()
+        relevant_df = self.cancer_df.dropna(subset=[KEGG_COL, 'Ref', 'Alt']).copy()
 
         def is_in_pathway(kegg_id_cell: str) -> bool:
             return any(gid in pathway_gene_ids for gid in str(kegg_id_cell).split(','))
 
-        mask = relevant_df['KeggId'].apply(is_in_pathway)
+        mask = relevant_df[KEGG_COL].apply(is_in_pathway)
         pathway_cancer_mutations = relevant_df[mask]
 
         mutation_count = len(pathway_cancer_mutations)
@@ -1127,6 +1138,198 @@ class PathwayAtlasResults:
                 print(f"Error plotting {base_name}: {e}")
 
         print(f"--- Finished. Generated {count_plotted} plots. ---")
+
+class PermutationTest:
+    """
+    Encapsulates the logic for performing statistical significance testing
+    (Permutation / Bootstrap tests) on pathway distances.
+    """
+
+    def __init__(self, bg_scores_pathway: str, cancer_scores_file: str, bootstrap_n: int = BOOTSTRAP_SAMPLES,
+                 random_state: int = 42):
+        self.n_permutations = bootstrap_n
+        self.random_state = random_state
+        self.gmm_fitter = GMM()  # Uses your existing GMM class
+
+        if not os.path.exists(bg_scores_pathway) or not os.path.exists(cancer_scores_file):
+            print(f"Error: One or both score files do not exist: {bg_scores_pathway}, {cancer_scores_file}")
+            return
+
+        self.bg_scores_pathway = bg_scores_pathway
+        self.cancer_scores_file = cancer_scores_file
+
+        np.random.seed(random_state)
+
+    def run_permutation_test(self, distance_metric: str = "kl_divergence"):
+
+        cancer_scores_df = pd.read_csv(self.cancer_scores_file)
+
+        print(f" ====== Starting permutation test for cancer: {os.path.basename(self.cancer_scores_file)} ======")
+
+        for idx, row in cancer_scores_df.iterrows():
+
+            pathway = row['pathway_name']
+            num_samples = row['n']  # Number of samples in the cancer data
+            cancer_distance = row['distance']  # Observed distance value
+
+            if num_samples < MIN_CANCER_SAMPLES:
+                cancer_scores_df.drop(idx, inplace=True)
+                continue
+
+            if 'p_value' not in cancer_scores_df.columns:
+
+                print(f"  Adding 'p_value' column to the results DataFrame.")
+
+                pathway_bg_filename = pjoin(self.bg_scores_pathway, f"{pathway}.csv")
+                if not os.path.exists(pathway_bg_filename):
+                    print(f"Background scores file not found for pathway {pathway}. Skipping.")
+                    continue
+
+                bg_scores_df = pd.read_csv(pathway_bg_filename)
+                scores_dict = self.get_pathway_scores_background(bg_scores_df)
+
+                print(f"  Bootstrapping pathway: {pathway}")
+
+                if distance_metric == "kl_divergence":
+                    distances = self._bootstrap_kl_divergence(scores_dict, bg_scores_df, num_samples)
+
+                p_value = self._calculate_p_value(cancer_distance, distances)
+
+                print(
+                    f"  Pathway: {pathway} | Observed Distance: {cancer_distance:.4f} | Num samples: {num_samples} | P-value: {p_value:.4f}")
+
+                cancer_scores_df.at[idx, 'p_value'] = p_value
+
+            print(f"  Starting FDR correction for cancer: {os.path.basename(self.cancer_scores_file)}")
+
+            self._perform_fdr_correction(self, cancer_scores_df, alphas=P_VALUE_THRESHOLDS)
+
+        cancer_scores_df.to_csv(self.cancer_scores_file, index=False)
+
+    def _bootstrap_kl_divergence(self, scores_dict, bg_scores_df, num_samples):
+        """
+        Helper method to perform bootstrap sampling on the background scores.
+        """
+        bg_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+
+        bg_gmm, _ = self.gmm_fitter.GMM_the_distribution(bg_hist, bin_edges)
+
+        if bg_gmm is None:
+            print(f"GMM fitting failed for background scores of pathway.")
+            return []
+
+        distances = []
+        for i in range(self.n_permutations):
+            sampled_scores = bg_scores_df.sample(n=num_samples, replace=True, random_state=self.random_state + i)
+            scores_dict = self.get_pathway_scores_background(sampled_scores)
+
+            sampled_hist, bin_edges = CancerPathwayScoring.create_joint_distribution(scores_dict, MICHAL_HN1_PSSM)
+            sampled_gmm, _ = self.gmm_fitter.GMM_the_distribution(sampled_hist, bin_edges)
+
+            if sampled_gmm is None:
+                continue
+
+            distance = DistributionDistances.kl_divergence_from_gmms(bg_gmm, sampled_gmm,
+                                                                     n_samples_mc=RANDOM_SAMPLE_NUM)
+            distances.append(distance)
+
+            if i % 100 == 0 and i > 0:
+                print(f"    Completed {i} / {self.n_permutations} permutations...")
+
+        return distances
+
+    def _perform_fdr_correction(self, cancer_scores_df: pd.DataFrame, alphas=None) -> None:
+        if alphas is None:
+            alphas = [0.05]
+        p_values = cancer_scores_df['p_value'].tolist()
+        for alpha in alphas:
+            reject, corrected_p_values = self._calculate_q_value(p_values, alpha=alpha)
+            cancer_scores_df['q_value'] = corrected_p_values
+            cancer_scores_df[f'significant_{alpha}'] = reject
+
+    @staticmethod
+    def _calculate_p_value(observed_distance, permuted_distances):
+        """
+        Calculates the p-value based on the observed distance and the distribution
+        of distances from permutations.
+
+        Args:
+            observed_distance (float): The distance calculated from the actual data.
+            permuted_distances (list): List of distances from permuted datasets.
+
+        Returns:
+            float: The p-value indicating the significance of the observed distance.
+        """
+        count_extreme = sum(1 for dist in permuted_distances if dist >= observed_distance)
+        p_value = count_extreme / len(permuted_distances)
+        p_value = max(0.0, min(1.0, float(p_value)))
+
+        return p_value
+
+    @staticmethod
+    def _calculate_q_value(p_values: list, alpha: float = 0.05) -> tuple:
+
+        """
+        Applies Benjamini-Hochberg FDR correction to a list of p-values.
+
+        Args:
+            p_values (list): List of p-values to correct.
+            alpha (float): Significance level for FDR correction.
+
+        Returns:
+            list: List of FDR-corrected p-values.
+        """
+        corrected_p_values = []
+        reject = []
+
+        for p in p_values:
+            if p < 0 or p > 1 or np.isnan(p):
+                corrected_p_values.append(np.nan)
+                reject.append(False)
+            else:
+                q = false_discovery_control(p, method='bh')
+                corrected_p_values.append(q)
+                r = q <= alpha
+                reject.append(r)
+
+        return reject, corrected_p_values
+
+    @staticmethod
+    def get_pathway_scores_background(pathway_df) -> dict:
+        """
+        Collects mutation scores from the pathway's genes, categorized by
+        mutation type (e.g., 'A>C') and then by score type.
+
+        Returns
+        -------
+        dict
+            A nested dictionary: {mut_type: {score_type: [scores]}}.
+            Example: {"A>C": {"esm_log_probs": [0.1, 0.2], ...}, ...}
+        """
+        if pathway_df.empty:
+            return {}
+
+        background_scores = defaultdict(lambda: defaultdict(list))
+
+        # Check for essential columns in the pre-aggregated CSV
+        required_cols = {"Ref", "Alt"}
+        if not required_cols.issubset(pathway_df.columns):
+            print("Warning: 'Ref' or 'Alt' columns missing in pathway scores file")
+            return {}
+
+        score_types = ['esm_log_probs', 'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob']
+
+        # Efficiently iterate over the single, preloaded DataFrame
+        for _, row in pathway_df.iterrows():
+            mut_type = f"{str(row['Ref']).upper()}>{str(row['Alt']).upper()}"
+
+            for score_type in score_types:
+                # Check if score exists and is not NaN
+                if score_type in row and pd.notna(row[score_type]):
+                    background_scores[mut_type][score_type].append(float(row[score_type]))
+
+            # Convert default dicts to regular dicts for a clean return value
+            return {mut: dict(scores) for mut, scores in background_scores.items()}
 
     # this might take forever to run, split to sarray jobs
     # def run_full_analysis(self, score_to_analyze: str, scoring_system: str,

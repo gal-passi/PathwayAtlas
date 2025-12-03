@@ -18,13 +18,13 @@ source /cs/labs/dina/ophirmil12/miniforge3/etc/profile.d/conda.sh
 conda activate project_env
 
 # go to PathwayAtlas folder [local git folder - cd .]
-cd /cs/labs/dina/ophirmil12/PathwayAtlas/
+cd /cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/
 
 ## startup venv       NO NEED WHEN HAVE CONDA
 #source ./venv/bin/activate
 
 # install all requirements
-# pip install --no-cache-dir -r requirements.txt
+#pip install --no-cache-dir -r requirements.txt
 
 # export esm model path to local venv
 export TORCH_HOME=./torch_cache
@@ -37,8 +37,8 @@ export TORCH_HOME=./torch_cache
 # run code (output in slurm .out file)                              ####### PY FILE NAME #######
 #python -u ./scripts/embed_cancer_seqs.py       ## need gpu
 #python -u ./scripts/disorder_score_cancer.py
-python -u ./scripts/fill_cancer_files.py
-
+#python -u ./scripts/fill_cancer_files.py
+python -u main.py
 
 
 
