@@ -300,6 +300,7 @@ class DistributionDistances:
             gmm_p (GaussianMixture): The fitted GMM for distribution P.
             gmm_q (GaussianMixture): The fitted GMM for distribution Q.
             n_samples_mc (int): Number of samples for Monte Carlo approximation.
+                    can be 1000, 10000 might take x6.6 runtime
 
         Returns:
             float: The estimated KL-Divergence KL(P || Q).
@@ -473,6 +474,9 @@ class DistributionDistances:
         w_shift = np.sum(diff_cdf * bin_widths)
 
         return w_distance, w_shift
+
+
+
 
 
 
