@@ -78,7 +78,7 @@ def main():
     parser.add_argument('--score_type', type=str, required=True,
                         choices=['clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob'],
                         help='The score type to analyze.')
-    parser.add_argument('--scoring_system', type=str, required=True, choices=['kl_divergence', 'wasserstein'],
+    parser.add_argument('--scoring_system', type=str, required=True, choices=['kl_divergence', 'wasserstein', 'dw_distance'],
                         help='The distance metric to use.')
 
     args = parser.parse_args()

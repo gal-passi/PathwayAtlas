@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=filling_scores
+#SBATCH --job-name=plots
 #SBATCH --killable
 #SBATCH --requeue
-#SBATCH --time=90:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=16G
 #SBATCH --ntasks=1
 #SBATCH -o slurm.out.%A_%a.out
@@ -32,15 +32,15 @@ export TORCH_HOME=./torch_cache
 
 
 
-
+echo "Starting python code..."
 
 # run code (output in slurm .out file)                              ####### PY FILE NAME #######
 #python -u ./scripts/embed_cancer_seqs.py       ## need gpu
 #python -u ./scripts/disorder_score_cancer.py
-python -u ./scripts/fill_cancer_files.py
-
-
-
+#python -u ./scripts/fill_cancer_files.py
+#python -u ./scripts/n_scores_threshold.py
+python -u ./scripts/plot_n_vs_q_val_by_cancer.py
+#python -u ./scripts/plot_cancer_count_per_pathway_significant.py
 
 # give access to bew files added to data
 ############################################################## chmod -R g+w ./data

@@ -34,7 +34,7 @@ CANCER_READY_EMBEDDINGS_PATH = pjoin(CBIO_PATH, "emb")
 CANCER_READY_DISORDER_PATH = pjoin(CBIO_PATH, "disorder_scores")
 CLINVAR_MODELS_PATH = pjoin(DB, 'clinvar_models')
 PATHWAY_SCORES_PATH = pjoin(KEGG_PATHWAYS_PATH, 'scores')
-RESULTS_PATH = './results and graphs'
+RESULTS_PATH = 'results_and_graphs'
 SCORES_RESULTS_PATH = pjoin(RESULTS_PATH, 'scores')
 
 CANCER_CSVS_MUTATIONS = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
@@ -87,7 +87,7 @@ FAMANALYSIS_COLUMNS = ['Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'
 CBIO_API_URL = 'https://www.cbioportal.org/api/v2/api-docs'
 MISSENSE_MUTATION = 'Missense_Mutation'
 CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
-CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
+#CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
 STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'StudyId', 'RefDNA']
 # exclude only on patient key and protein change to avoid problems with hg19/hg18
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
