@@ -1,8 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=pathway_analysis
-#SBATCH --time=90:00:00
+#SBATCH --job-name=dw_dist
+#SBATCH --time=20:00:00
 #SBATCH --mem=16G
 #SBATCH --ntasks=1
+#SBATCH --killable
 #SBATCH --requeue
 
 # --- Dynamically set output file and job name based on arguments ---

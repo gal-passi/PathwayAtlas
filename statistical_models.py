@@ -1,6 +1,4 @@
-from typing import Optional, Dict, Union
-
-from biorun.ontology import print_node
+from typing import List, Optional, Dict, Union
 
 from definitions import *
 import pandas as pd
@@ -11,16 +9,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import os
 import pickle
-from scipy.stats import wasserstein_distance, false_discovery_control
-import matplotlib.pyplot as plt
-import numpy as np
-import glob
-
-from utils import sep_csv_files
 from scipy.stats import wasserstein_distance
-from scipy.special import logsumexp
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 
 class GMM:
@@ -43,16 +32,11 @@ class GMM:
         gmm = GaussianMixture(
             n_components=n_components,
             random_state=random_state,
-            init_params='random',   # only for bootstrap
-            tol=1e-3,    # only for bootstrap
-            max_iter=50, # only for bootstrap
-            n_init=1,    # only for bootstrap
             covariance_type='full'
         )
         gmm.fit(reconstructed_data)
 
-        #bic = gmm.bic(reconstructed_data)
-        bic = None
+        bic = gmm.bic(reconstructed_data)
         return gmm, bic
 
     def GMM_bic_curve(self, joint_distribution, bin_edges, max_components=10,
@@ -242,6 +226,8 @@ class GMM:
             print(f"Error saving distribution for {pathway_id}: {e}")
 
 
+
+
 class DistributionDistances:
     """
     A utility class to calculate distances between two data distributions.
@@ -300,7 +286,6 @@ class DistributionDistances:
             gmm_p (GaussianMixture): The fitted GMM for distribution P.
             gmm_q (GaussianMixture): The fitted GMM for distribution Q.
             n_samples_mc (int): Number of samples for Monte Carlo approximation.
-                    can be 1000, 10000 might take x6.6 runtime
 
         Returns:
             float: The estimated KL-Divergence KL(P || Q).
@@ -343,87 +328,6 @@ class DistributionDistances:
         # It takes the locations (values) and their respective weights (probabilities).
         return wasserstein_distance(u_values=bin_centers, v_values=bin_centers,
                                     u_weights=counts1, v_weights=counts2)
-
-    @staticmethod
-    def kl_gmm_variational(gmm_p, gmm_q):
-        """
-        Computes the Variational Upper Bound of KL(P || Q) for GMMs.
-        Speed: ~30-100x faster than Monte Carlo for KL-D(gmm, gmm).
-        Accuracy: Correlations > 0.99 with true KL, but slightly overestimates values.
-        # https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=4218101&tag=1
-        """
-        # Small regularization to prevent crashes on singular matrices
-        reg = 1e-6
-
-        # Extract Weights (add tiny epsilon to avoid log(0))
-        log_weights_p = np.log(gmm_p.weights_ + 1e-300)
-        log_weights_q = np.log(gmm_q.weights_ + 1e-300)
-
-        mu_p, cov_p = gmm_p.means_, gmm_p.covariances_
-        mu_q, cov_q = gmm_q.means_, gmm_q.covariances_
-
-        K_p, dim = mu_p.shape
-        K_q = len(mu_q)
-
-        # Helper: Compute Precision (inverse cov) and Log-Determinant efficiently
-        def get_prec_logdet(covs):
-            precs = []
-            logdets = []
-            for C in covs:
-                # Add regularization to diagonal for stability
-                C_reg = C + np.eye(dim) * reg
-                try:
-                    # Cholesky is faster and more stable than inv()
-                    L = np.linalg.cholesky(C_reg)
-                    inv = np.linalg.inv(C_reg)
-                    logdet = 2 * np.sum(np.log(np.diag(L)))
-                except np.linalg.LinAlgError:
-                    # Fallback if matrix is still broken
-                    inv = np.eye(dim)
-                    logdet = 0
-                precs.append(inv)
-                logdets.append(logdet)
-            return np.array(precs), np.array(logdets)
-
-        prec_p, logdet_p = get_prec_logdet(cov_p)
-        prec_q, logdet_q = get_prec_logdet(cov_q)
-
-        # 1. Calculate pairwise KL(P_i || Q_j) for all components
-        # This creates a matrix of shape (K_p, K_q)
-        kl_pairs_pq = np.zeros((K_p, K_q))
-        for i in range(K_p):
-            for j in range(K_q):
-                diff = mu_q[j] - mu_p[i]
-                term_trace = np.trace(prec_q[j] @ cov_p[i])
-                term_mahalanobis = diff.T @ prec_q[j] @ diff
-
-                kl_pairs_pq[i, j] = 0.5 * (
-                        term_trace + term_mahalanobis - dim + (logdet_q[j] - logdet_p[i])
-                )
-
-        # 2. Calculate pairwise KL(P_i || P_k) for the numerator (Entropy approx)
-        kl_pairs_pp = np.zeros((K_p, K_p))
-        for i in range(K_p):
-            for k in range(K_p):
-                diff = mu_p[k] - mu_p[i]
-                term_trace = np.trace(prec_p[k] @ cov_p[i])
-                term_mahalanobis = diff.T @ prec_p[k] @ diff
-
-                kl_pairs_pp[i, k] = 0.5 * (
-                        term_trace + term_mahalanobis - dim + (logdet_p[k] - logdet_p[i])
-                )
-
-        # --- The Variational Bound Formula ---
-        # KL(P||Q) <= Sum_i [ w_i * (log_sum_k(w_k * e^-KL_ik) - log_sum_j(v_j * e^-KL_ij)) ]
-
-        # Numerator: Expectation of log P(x)
-        log_p_approx = np.array([logsumexp(log_weights_p - kl_pairs_pp[i]) for i in range(K_p)])
-
-        # Denominator: Expectation of log Q(x)
-        log_q_approx = np.array([logsumexp(log_weights_q - kl_pairs_pq[i]) for i in range(K_p)])
-
-        # Final weighted sum
-        return np.sum(np.exp(log_weights_p) * (log_p_approx - log_q_approx))
 
     @staticmethod
     def directional_wasserstein_from_hist(counts_bg: np.ndarray, counts_cancer: np.ndarray,
@@ -479,15 +383,13 @@ class DistributionDistances:
 
 
 
-
-
 class CancerPathwayScoring:
     """
     Analyzes and compares mutation scores between a KEGG pathway (background model)
     and a specific cancer type's mutation dataset.
     """
-    def __init__(self, pathway_dict_path: str, pathway_scores_csv_path: str,
-                 cancer_data: Union[str, pd.DataFrame]):
+
+    def __init__(self, pathway_dict_path: str, pathway_scores_csv_path: str, cancer_data: Union[str, pd.DataFrame]):
         """
         Initializes the scoring object by loading pathway and cancer data.
 
@@ -498,16 +400,15 @@ class CancerPathwayScoring:
         pathway_scores_csv_path : str
             File path to the pre-aggregated CSV with all background scores for the pathway.
         cancer_data : Union[str, pd.DataFrame]
-            Either a file path (str) to the CSV with scored cancer mutations,
-            OR a pre-loaded pandas DataFrame. Passing the DataFrame directly
-            avoids repeated I/O when processing multiple pathways for the same cancer.
+            Either the file path (str) to the cancer mutations CSV file or the pre-loaded
+            DataFrame (pd.DataFrame).
         """
         self.pathway_dict_path = pathway_dict_path
         self.pathway_scores_csv_path = pathway_scores_csv_path
         self.pssm = MICHAL_HN1_PSSM  # Using the predefined PSSM for weighting
         self.gmm_fitter = GMM()  # GMM helper instance for fitting models
 
-        # 1. Load Pathway Definition (Pickle)
+        # Load the pickle file to get the definitive list of gene IDs
         try:
             with open(self.pathway_dict_path, 'rb') as f:
                 self.pathway_dict = pickle.load(f)
@@ -515,29 +416,29 @@ class CancerPathwayScoring:
             print(f"[Error] Could not load pathway dictionary {self.pathway_dict_path}: {e}")
             self.pathway_dict = {}
 
-        # 2. Load Pathway Background Scores (CSV)
+        # Load the pre-aggregated CSV with all background scores
         try:
             self.pathway_df = pd.read_csv(self.pathway_scores_csv_path)
         except FileNotFoundError:
             print(f"[Error] Pathway scores CSV not found: {self.pathway_scores_csv_path}")
             self.pathway_df = pd.DataFrame()
 
-        # 3. Load or Assign Cancer Data
-        if isinstance(cancer_data, pd.DataFrame):
-            # Optimization: Use pre-loaded DataFrame
-            self.cancer_df = cancer_data
-            self.cancer_csv_path = "Pre-loaded DataFrame"
-        elif isinstance(cancer_data, str):
-            # Standard: Load from CSV path
-            self.cancer_csv_path = cancer_data
+        if isinstance(cancer_data, str):
             try:
-                self.cancer_df = pd.read_csv(self.cancer_csv_path)
+                # Load from path
+                self.cancer_df = pd.read_csv(cancer_data)
             except FileNotFoundError:
-                print(f"[Error] Cancer CSV file not found: {self.cancer_csv_path}")
+                print(f"[Error] Cancer CSV file not found: {cancer_data}")
                 self.cancer_df = pd.DataFrame()
+        elif isinstance(cancer_data, pd.DataFrame):
+            # Assign pre-loaded DataFrame
+            self.cancer_df = cancer_data
         else:
-            print(f"[Error] Invalid input for cancer_data: {type(cancer_data)}. Must be str or pd.DataFrame.")
+            print(f"[Error] Invalid type for cancer_data: {type(cancer_data)}. Expected str or pd.DataFrame.")
             self.cancer_df = pd.DataFrame()
+
+        if self.cancer_df.empty:
+            print("[Warning] Cancer DataFrame is empty or failed to load initially.")
 
     def get_pathway_genes_id(self) -> set:
         """Returns a set of KEGG gene IDs in the pathway."""
@@ -597,16 +498,16 @@ class CancerPathwayScoring:
         if self.cancer_df.empty or not pathway_gene_ids:
             return {}, 0  # Return count of 0
 
-        required_cols = {KEGG_COL, 'Ref', 'Alt'}
+        required_cols = {'KeggId', 'Ref', 'Alt'}
         if not required_cols.issubset(self.cancer_df.columns):
             return {}, 0  # Return count of 0
 
-        relevant_df = self.cancer_df.dropna(subset=[KEGG_COL, 'Ref', 'Alt']).copy()
+        relevant_df = self.cancer_df.dropna(subset=['KeggId', 'Ref', 'Alt']).copy()
 
         def is_in_pathway(kegg_id_cell: str) -> bool:
             return any(gid in pathway_gene_ids for gid in str(kegg_id_cell).split(','))
 
-        mask = relevant_df[KEGG_COL].apply(is_in_pathway)
+        mask = relevant_df['KeggId'].apply(is_in_pathway)
         pathway_cancer_mutations = relevant_df[mask]
 
         mutation_count = len(pathway_cancer_mutations)
@@ -881,6 +782,11 @@ class CancerPathwayScoring:
 
 
 
+
+
+
+
+
 class PathwayAtlasResults:
     """
     This class orchestrates the calculation of distance scores for all pairs of pathway-cancer data.
@@ -961,6 +867,12 @@ class PathwayAtlasResults:
         print(f"\n--- Starting Analysis for Cancer: {cancer_name} ---")
         self.results[cancer_name] = {}
 
+        try:
+            cancer_df = pd.read_csv(cancer_file_path)
+        except Exception as e:
+            print(f"Error loading cancer file {cancer_file_path}: {e}")
+            return {}
+
         # Get the list of all pathway definition files (pickles)
         pathway_dict_files = sorted(os.listdir(self.__pathways_dicts_path))
 
@@ -985,7 +897,7 @@ class PathwayAtlasResults:
                 analyzer = CancerPathwayScoring(
                     pathway_dict_path=pathway_dict_filepath,
                     pathway_scores_csv_path=pathway_scores_filepath,
-                    cancer_data=cancer_file_path
+                    cancer_data=cancer_df
                 )
 
                 # Get the score dictionaries. The background one is now loaded very fast.
@@ -998,8 +910,6 @@ class PathwayAtlasResults:
                                                         background_scores, cancer_scores,
                                                         score_to_analyze)
                     if distance_result is not None:
-                        # --- START OF FIX ---
-
                         result_data = {'n': mutation_count}
 
                         if isinstance(distance_result, tuple) and len(distance_result) == 2:
@@ -1138,6 +1048,16 @@ class PathwayAtlasResults:
                 print(f"Error plotting {base_name}: {e}")
 
         print(f"--- Finished. Generated {count_plotted} plots. ---")
+
+
+
+
+
+
+
+
+
+
 
 class PermutationTest:
     """
@@ -1331,132 +1251,107 @@ class PermutationTest:
             # Convert default dicts to regular dicts for a clean return value
             return {mut: dict(scores) for mut, scores in background_scores.items()}
 
-    # this might take forever to run, split to sarray jobs
-    # def run_full_analysis(self, score_to_analyze: str, scoring_system: str,
-    #                       results_path: str = RESULTS_PATH) -> Dict[str, Dict[str, float]]:
-    #     """
-    #     Runs the entire analysis by iterating through all cancer files,
-    #     calculating distances against all pathways, and saving backup results incrementally.
-    #
-    #     Args:
-    #         score_to_analyze (str): The score type to use for the analysis
-    #                                 (e.g., 'clinvar_reg_dis_ordered_prob').
-    #         scoring_system (str): The distance metric to use
-    #                               (e.g., 'kl_divergence', 'wasserstein').
-    #         results_path (str): The directory where backup and final results will be saved.
-    #
-    #     Returns:
-    #         Dict[str, Dict[str, float]]: A nested dictionary containing the complete results.
-    #         The structure is: {cancer_name: {pathway_file: distance_score}}.
-    #     """
-    #     print(f"\n{'=' * 25}\n--- Starting Full Atlas Analysis ---")
-    #     print(f"Using Score: '{score_to_analyze}'")
-    #     print(f"Using Distance Metric: '{scoring_system}'")
-    #     print(f"{'=' * 25}\n")
-    #
-    #     # Clear any previous results to ensure a fresh run
-    #     self.results = {}
-    #
-    #     # Ensure the results directory exists
-    #     os.makedirs(results_path, exist_ok=True)
-    #
-    #     cancer_files = sorted(os.listdir(self.__cancer_csvs_path))
-    #     if not cancer_files:
-    #         print("[Warning] No cancer files found in the specified directory.")
-    #         return {}
-    #
-    #     backup_filename = f"backup_results_{scoring_system}_{score_to_analyze}.pickle"
-    #     backup_file_path = os.path.join(results_path, backup_filename)
-    #
-    #     for i, cancer_file in enumerate(cancer_files):
-    #         cancer_file_path = os.path.join(self.__cancer_csvs_path, cancer_file)
-    #
-    #         # Skip directories or non-file items
-    #         if not os.path.isfile(cancer_file_path):
-    #             continue
-    #
-    #         print(f"\n{'#' * 15} Processing Cancer {i + 1}/{len(cancer_files)}: {cancer_file} {'#' * 15}")
-    #
-    #         # This method will perform the analysis for one cancer vs all pathways
-    #         # and internally update self.results
-    #         self.calculate_distances_single_cancer(
-    #             cancer_file_path,
-    #             score_to_analyze,
-    #             scoring_system
-    #         )
-    #
-    #         # --- Save a backup after each cancer is fully processed ---
-    #         try:
-    #             with open(backup_file_path, 'wb') as f:
-    #                 pickle.dump(self.results, f, protocol=pickle.HIGHEST_PROTOCOL)
-    #             print(f"\n[Backup] Progress for {i + 1} cancers saved to: {backup_file_path}")
-    #         except Exception as e:
-    #             print(f"\n[Error] Could not save backup file: {e}")
-    #
-    #     print(f"\n{'=' * 30}\n--- Full Atlas Analysis Completed ---\n{'=' * 30}")
-    #     return self.results
+    def generate_plots_for_cancer(self, cancer_file_path: str, stats_csv_path: str, score_to_analyze: str):
+        if not os.path.isfile(cancer_file_path):
+            print(f"Error: Cancer file not found: {cancer_file_path}")
+            return
 
+        if not os.path.isfile(stats_csv_path):
+            print(f"Error: Stats CSV file not found: {stats_csv_path}")
+            return
 
-"""
-############ WORKING EXAMPLE: ############
+        cancer_name = os.path.basename(cancer_file_path).replace(".csv", "")
+        print(f"\n--- Generating Plots for Cancer: {cancer_name} (n >= 20) ---")
 
+        # ---------------------------------------------------------
+        # 1. LOAD AND FILTER STATS
+        # ---------------------------------------------------------
+        try:
+            stats_df = pd.read_csv(stats_csv_path)
+            if 'n' not in stats_df.columns:
+                print("Error: Column 'n' missing in CSV.")
+                return
 
-# 1. Instantiate the class with the paths to your files.
-#    Replace these paths with the actual locations of your files.
-pathway_file = "./data/kegg/pathways/objects/hsa04010.pickle"
-cancer_file = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers/acc_mutations.csv"
-analyzer = CancerPathwayScoring(pathway_file, cancer_file)
+            # Filter n >= 20
+            filtered_df = stats_df[stats_df['n'] >= 20]
 
-# 2. Collect the background scores from all genes in the pathway.
-print(f"Step 1: Collecting background scores for pathway '{pathway_file}'...")
-background_scores = analyzer.get_pathway_scores_background()
+            # Create a lookup dictionary:  {"hsa04110": {row_data}, ...}
+            # We strip ".pickle" from the keys to ensure matching works.
+            stats_lookup = {}
+            for _, row in filtered_df.iterrows():
+                raw_name = str(row['pathway_name'])
+                clean_name = raw_name.replace(".pickle", "").strip()
 
-# 3. Collect the cancer-specific scores for genes in that same pathway.
-print(f"Step 2: Collecting cancer-specific scores from '{cancer_file}'...")
-cancer_scores = analyzer.get_cancer_pathway_scores()
+                # Handle column names for distance (some files have 'distance', others 'kl_divergence')
+                dist_val = row.get('distance', row.get('kl_divergence', 0))
 
-# 4. Proceed only if both datasets have scores to compare.
-if background_scores and cancer_scores:
-    # We will use the 'clinvar_reg_dis_ordered_prob' score for this example.
-    score_to_analyze = 'clinvar_reg_dis_ordered_prob'
+                stats_lookup[clean_name] = {
+                    'n': row['n'],
+                    'q_value': row['q_value'],
+                    'distance': dist_val
+                }
 
-    # --- KL-Divergence Calculation ---
-    print(f"\nStep 3a: Calculating KL-Divergence using '{score_to_analyze}' scores...")
-    kl_divergence = analyzer.calculate_distance_gmm_kl_d(
-        background_scores,
-        cancer_scores,
-        score_type=score_to_analyze
-    )
+            print(f"-> Valid pathways (n >= 20) in CSV: {len(stats_lookup)}")
 
-    # --- Wasserstein Distance Calculation ---
-    print(f"Step 3b: Calculating Wasserstein Distance using '{score_to_analyze}' scores...")
-    wasserstein_dist = analyzer.calculate_distance_wasserstein(
-        background_scores,
-        cancer_scores,
-        score_type=score_to_analyze
-    )
+            if not stats_lookup:
+                print("No pathways met criteria.")
+                return
 
-    # 5. Print the final results.
-    print("\n--- Analysis Complete ---")
-    if kl_divergence is not None:
-        print(f"The KL-Divergence is: {kl_divergence:.4f}")
-        print("(Measures the information gain from switching from the background to the cancer model.)")
-    else:
-        print("Could not calculate KL-Divergence.")
+        except Exception as e:
+            print(f"Critical Error reading CSV: {e}")
+            return
 
-    if wasserstein_dist is not None:
-        print(f"The Wasserstein Distance is: {wasserstein_dist:.4f}")
-        print("(Represents the 'work' required to transform the background distribution into the cancer distribution.)")
-    else:
-        print("Could not calculate Wasserstein Distance.")
+        # ---------------------------------------------------------
+        # 2. ITERATE FILES AND PLOT
+        # ---------------------------------------------------------
+        pathway_dict_files = sorted(os.listdir(self.__pathways_dicts_path))
+        count_plotted = 0
 
-    print(
-        "\n(Higher values for both metrics indicate a greater difference between the cancer mutation profile and the background model.)")
+        for i, pathway_dict_filename in enumerate(pathway_dict_files):
 
-else:
-    print("\n--- Analysis Skipped ---")
-    if not background_scores:
-        print("Could not find any background scores in the pathway file.")
-    if not cancer_scores:
-        print("No mutations found in the cancer dataset for the genes in this specific pathway.")
-"""
+            # Normalize filename: "hsa04110.pickle" -> "hsa04110"
+            base_name = os.path.splitext(pathway_dict_filename)[0]
+
+            # CHECK MATCH: Is this file in our filtered stats list?
+            if base_name not in stats_lookup:
+                continue
+
+            # Retrieve the stats we saved earlier
+            current_stats = stats_lookup[base_name]
+
+            # Setup Paths
+            pathway_dict_filepath = os.path.join(self.__pathways_dicts_path, pathway_dict_filename)
+            pathway_scores_filename = f"{base_name}.csv"
+            pathway_scores_filepath = os.path.join(self.__pathways_scores_path, pathway_scores_filename)
+
+            if not os.path.isfile(pathway_scores_filepath):
+                continue
+
+            try:
+                analyzer = CancerPathwayScoring(
+                    pathway_dict_path=pathway_dict_filepath,
+                    pathway_scores_csv_path=pathway_scores_filepath,
+                    cancer_data=cancer_file_path
+                )
+
+                # Load Scores
+                background_scores = analyzer.get_pathway_scores_background()
+                cancer_scores, mutation_count = analyzer.get_cancer_pathway_scores()
+
+                if background_scores and cancer_scores:
+                    print(f"[{count_plotted + 1}] Plotting {base_name} ...")
+
+                    # CALL PLOT WITH DATA DICT
+                    analyzer.plot_pathway_distribution_comparison(
+                        pathway_name=base_name,
+                        cancer_name=cancer_name,
+                        stats_data=current_stats,
+                        background_scores=background_scores,
+                        cancer_scores=cancer_scores,
+                        score_type=score_to_analyze
+                    )
+                    count_plotted += 1
+            except Exception as e:
+                print(f"Error plotting {base_name}: {e}")
+
+        print(f"--- Finished. Generated {count_plotted} plots. ---")
