@@ -8,7 +8,7 @@ cd /cs/labs/dina/ophirmil12/PathwayAtlas/
 mkdir -p slurm_out
 
 # Count files to determine array size
-CANCER_DATA_DIR="/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
+CANCER_DATA_DIR="/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/cancers"
 NUM_CANCER_FILES=$(find "$CANCER_DATA_DIR" -type f -name "*.csv" | wc -l)
 
 if [ "$NUM_CANCER_FILES" -eq 0 ]; then

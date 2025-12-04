@@ -1,7 +1,5 @@
 import pickle
 from os.path import join as pjoin
-import re
-
 
 def save_dict(data, path):
     with open(path, 'wb') as f:
@@ -17,47 +15,62 @@ def V3_version_letters(sequence: str) -> str:
     return sequence.replace('B', 'N').replace('U', 'C').replace('X', 'G').replace('Z', 'Q')
 
 
-#  DIRECTORIES
+#  DIRECTORIES and FILES
 
-DB = 'data'
-CLIN_VAR_PATH = pjoin(DB, 'clinvar.csv')
-CBIO_PATH = pjoin(DB, 'cbio')
-KEGG_PATH = pjoin(DB, 'kegg')
-KEGG_DISORDERED_AA_PATH = pjoin(KEGG_PATH, 'v3_seqs')       # sequences in V3 format for dis/ordered prediction tool
-STUDIES_PATH = pjoin(CBIO_PATH, 'studies')
-CANCERS_PATH = pjoin(CBIO_PATH, 'cancers')
-SEQ_PATH = pjoin(CBIO_PATH, 'sequences')
+BASE_PATH = "/cs/labs/dina/ophirmil12/PathwayAtlas"
+DB = pjoin(BASE_PATH, 'data')
 
-KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')
-KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')
-KEGG_PATHWAY_OBJECTS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'objects')
-KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')
-DISTRIBUTIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'distributions')
-CANCER_READY_EMBEDDINGS_PATH = pjoin(CBIO_PATH, "emb")
-CANCER_READY_DISORDER_PATH = pjoin(CBIO_PATH, "disorder_scores")
-CLINVAR_MODELS_PATH = pjoin(DB, 'clinvar_models')
-PATHWAY_SCORES_PATH = pjoin(KEGG_PATHWAYS_PATH, 'scores')
-RESULTS_PATH = './results and graphs'
+CLIN_VAR_PATH = pjoin(DB, 'clinvar.csv')                                        # The pure ClinVar DB
+CBIO_PATH = pjoin(DB, 'cbio')                                                   # Data and studies from cBioPortal
+KEGG_PATH = pjoin(DB, 'kegg')                                                   # Data from KEGG
+CLINVAR_MODELS_PATH = pjoin(DB, 'clinvar_models')                               # Trained regressors of on ClinVar data
+CLINVAR_MODELS_DICT_PATH = pjoin(DB, 'clinvar_log_reg_models.pkl')
+STUDIES_DFS = pjoin(DB, 'studies_dfs.pickle')                                   # ???
+CANCER_DFS = pjoin(DB, 'cancer_dfs.pickle')                                     # ???
+PROTEIN_SEQUENCES_FILE = pjoin(DB, 'protein_sequences.pkl')                     # ???
+
+KEGG_DISORDERED_AA_PATH = pjoin(KEGG_PATH, 'v3_seqs')                           # sequences in V3 format for dis/ordered prediction tool
+STUDIES_PATH = pjoin(CBIO_PATH, 'studies')                                      # ???
+CANCERS_PATH = pjoin(CBIO_PATH, 'cancers')                                      # ???
+SEQ_PATH = pjoin(CBIO_PATH, 'sequences')                                        # ???
+
+KEGG_GENES_PATH = pjoin(KEGG_PATH, 'genes')                                     # KeggGene pickles
+KEGG_PATHWAYS_PATH = pjoin(KEGG_PATH, 'pathways')                               # KEGG pathways data
+KEGG_PATHWAY_OBJECTS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'objects')                # pickles for each pathway, from gene to gene snvs csv
+KEGG_PATHWAY_MUTATIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'snvs')                 # single genes all snvs
+
+DISTRIBUTIONS_PATH = pjoin(KEGG_PATHWAYS_PATH, 'distributions')                 # ???
+CANCER_READY_EMBEDDINGS_PATH = pjoin(CBIO_PATH, 'emb')                          # ESM1b embedding objects for all sequences
+CANCER_READY_DISORDER_PATH = pjoin(CBIO_PATH, 'disorder_scores')                # predicted disorder score for all sequences
+PATHWAY_SCORES_PATH = pjoin(KEGG_PATHWAYS_PATH, 'scores')                       # The combined SNVs tables of the genes, by pathway, for easy access
+
+RESULTS_PATH = pjoin(BASE_PATH, 'results and graphs')
 SCORES_RESULTS_PATH = pjoin(RESULTS_PATH, 'scores')
+SCORES_RESULTS_KL_D_PATH = pjoin(SCORES_RESULTS_PATH, 'clinvar_reg_dis_ordered_prob-kl_divergence')
+SCORES_RESULTS_DW_PATH = pjoin(SCORES_RESULTS_PATH, 'clinvar_reg_dis_ordered_prob-dw_distance')
 
-CANCER_CSVS_MUTATIONS = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
-CANCER_CSVS_MUTATIONS = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
-LOTEM_RESULTS_PATH = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/results_and_graphs"
+CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
+KEGG_HSA_PATHWAYS_DIR = pjoin(KEGG_PATH, 'kegg_hsa_pathways.pickle')            # {pathway_id : desc}
 
 
-# FILES
-
-STUDIES_PICKLE = 'studies_dfs.pickle'
-CANCERS_PICKLE = 'cancer_dfs.pickle'
-SEQ_PICKLE = 'protein_seq_dict.pickle'
-STUDIES_DFS = pjoin(DB, STUDIES_PICKLE)
-CANCER_DFS = pjoin(DB, CANCERS_PICKLE)
-PROTEIN_SEQUENCES_FILE = pjoin(DB, 'protein_sequences.pkl')
+CANCER_CSVS_MUTATIONS = CANCERS_PATH
+CANCER_SCORES_KL_PATH = SCORES_RESULTS_KL_D_PATH
 MUTATIONS_CSV_SUFFIX = '_mutations.csv'
+SEQ_PICKLE = 'protein_seq_dict.pickle'
 
 
-DIRS_TO_CREATE = [DB, CBIO_PATH, KEGG_PATH, STUDIES_PATH, KEGG_GENES_PATH, KEGG_PATHWAYS_PATH,
-                  KEGG_PATHWAY_OBJECTS_PATH,KEGG_PATHWAY_MUTATIONS_PATH]
+
+
+# QUERIES
+
+UIDS_COL_IDX = 0
+REVIEWED_COL_IDX = 2
+GENE_NAME_COL_IDX = 4
+UNIP_REVIEWED = 'reviewed'
+UNIP_QUERY_URL = "https://rest.uniprot.org/uniprotkb/search?"
+Q_UID_PROT_ALL = "fields=&gene&format=tsv&query={}+AND+organism_id:9606"
+
+
 
 
 #   REQUESTS AND OS CONSTANTS
@@ -101,16 +114,15 @@ FAMANALYSIS_COLUMNS = ['Chr', 'Start', 'End', 'Ref', 'Alt', 'Protein', 'Variant'
 
 VERBOSE = {'critical': 0, 'program_warning': 1, 'program_progress': 1,
            'thread_warnings': 2, 'thread_progress': 3, 'raw_warnings': 3}
-# Q_UNIP_ALL_ISOFORMS = UNIP_QUERY_URL + "&format=fasta&query=" \
-#                                           "(accession:{}+AND+is_isoform:true)+OR+(accession:{}+AND+is_isoform:false)"
+Q_UNIP_ALL_ISOFORMS = UNIP_QUERY_URL + "&format=fasta&query=" \
+                                          "(accession:{}+AND+is_isoform:true)+OR+(accession:{}+AND+is_isoform:false)"
 
 
 CBIO_BASE_URL = 'https://www.cbioportal.org/api'
 CBIO_API_URL = CBIO_BASE_URL + '/v2/api-docs'
 
 MISSENSE_MUTATION = 'Missense_Mutation'
-CANCER_TYPES_DIR = pjoin(CBIO_PATH, 'cbio_cancer_types.pickle')
-#CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
+CBIO_CANCER_TYPES = load_dict(CANCER_TYPES_DIR)
 STUDY_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientId', 'PatientKey', 'SampleId', 'StudyId', 'RefDNA']
 # exclude only on patient key and protein change to avoid problems with hg19/hg18
 DUPLICATE_EXCLUSION_COLUMNS = FAMANALYSIS_COLUMNS + ['PatientKey']
@@ -128,7 +140,7 @@ PATIENT_AGE_COL = 'Age'
 
 #  KEGG
 
-KEGG_HSA_PATHWAYS_DIR = pjoin(KEGG_PATH, 'kegg_hsa_pathways.pickle')  # {pathway_id : desc}
+
 
 KEGG_API_URL = 'https://rest.kegg.jp'
 COMMAND_TYPES = ['link', 'list', 'conv', 'get']
@@ -209,10 +221,6 @@ NETWORK_ID_ERROR = f'KEGG id must be of a KEGG module or KEGG pathway'
 LOAD_OBJ_ERROR = 'Data missing or invalid for {}. ' \
                  '\nDelete instance from DB and recreate the object'
 
-NETWORK_TYPE_ERROR = f'Network type must be one of: {", ".join(NETWORK_TYPES)}'
-NETWORK_ID_ERROR = f'KEGG id must be of a KEGG module or KEGG pathway'
-LOAD_OBJ_ERROR = 'Data missing or invalid for {}. ' \
-                 '\nDelete instance from DB and recreate the object'
 CON_ERR_FUS = "Connection Error in fetch_uniport_sequences while fetching isoforms for {}\nURL: "
 CON_ERR_GENERAL = "Connection Error in {} on protein {}"
 CON_ERR_UFN = "Connection Error in uid_from_name failed to fetch Uniprot IDs for protein {}"
@@ -220,6 +228,6 @@ CON_ERR_UFN = "Connection Error in uid_from_name failed to fetch Uniprot IDs for
 
 # PERMUTATION TEST
 
-BOOTSTRAP_SAMPLES = 1000
+BOOTSTRAP_SAMPLES = 2000
 P_VALUE_THRESHOLDS = [0.05, 0.01, 0.001]
 MIN_CANCER_SAMPLES = 100

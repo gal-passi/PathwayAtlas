@@ -21,7 +21,7 @@ scontrol update job $SLURM_JOB_ID JobName=plot_${SCORE_TYPE}_${SCORING_SYSTEM}
 
 # --- Set up file lists ---
 # We use the same directory to ensure the array index matches the file list
-CANCER_DATA_DIR="/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
+CANCER_DATA_DIR="/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/cancers"
 
 CANCER_FILES=($(find "$CANCER_DATA_DIR" -type f -name "*.csv"))
 

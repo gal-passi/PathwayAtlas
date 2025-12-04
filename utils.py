@@ -18,9 +18,35 @@ import copy
 import glob
 from torch.nn.functional import log_softmax
 import torch
+import tempfile
+import csv
+
+
 
 snake_format = lambda s: s.replace(' ', '_').replace('-', '_').lower()
 
+def print_if(verbose: object, thr: object, text: object) -> object:
+    """
+    print text if verbose > thr
+    :param verbose: int
+    :param thr: int
+    :param text: str
+    :return:
+    """
+    if verbose >= thr:
+        print(text)
+
+def process_fastas(text):
+    """
+    process multiple fasta sequences
+    :return: {id: sequence}
+    """
+    temp = tempfile.TemporaryFile(mode='w+t')
+    temp.writelines(text)
+    temp.seek(0)
+    ret = {seq_record.id: str(seq_record.seq) for seq_record in SeqIO.parse(temp, "fasta")}
+    temp.close()
+    return ret
 
 def read_in_chunks(array, chunk_size):
     for i in range(0, len(array), chunk_size):
@@ -49,6 +75,30 @@ def load_obj(obj, path, name=''):
         else:
             raise NameError(LOAD_OBJ_ERROR.format(name))
 
+def extract_accession(uid):
+    if "|" in uid:
+        return uid.split("|")[1]  # get the middle part
+    return uid
+
+def warn_if(verbose, thr, text):
+    """
+    print text if verbose > thr
+    :param verbose: int
+    :param thr: int
+    :param text: str
+    :return:
+    """
+    if verbose >= thr:
+        warnings.warn(text)
+
+def open_df_pickle(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            dfs = pickle.load(f)
+            print(f"Opened existing {path}")
+            return dfs
+    return {}
+
 
 def create_session(header, retries=5, wait_time=0.5, status_forcelist=None):
     """
@@ -66,7 +116,6 @@ def create_session(header, retries=5, wait_time=0.5, status_forcelist=None):
 
     s.mount(header, HTTPAdapter(max_retries=retries))
     return s
-
 
 def safe_get_request(session, url, timeout=TIMEOUT, warning_msg='connection failed', return_on_failure=None):
     """
@@ -86,6 +135,85 @@ def safe_get_request(session, url, timeout=TIMEOUT, warning_msg='connection fail
         return return_on_failure
     return r
 
+def safe_post_request(session, url, timeout, verbose_level, warning_msg='connection failed', return_on_failure=None,
+                      warning_thr=VERBOSE['thread_warnings'], raw_err_thr=VERBOSE['raw_warnings']):
+    """
+    creates a user friendly request raises warning on ConnectionError but will not crush
+    verbose_level = 3 will return raw Error massage in warning
+    :param session: requests session obj
+    :param url: str url to query
+    :param timeout: float max time to wait for response
+    :param verbose_level: int
+    :param warning_msg: str msg to display on failure
+    :param return_on_failure: value to return upon exception
+    :param raw_err_thr: int threshold to print raw error messages
+    :param warning_thr: int threshold to print warning messages
+    :return: response
+    """
+    try:
+        r = session.post(url, timeout=timeout)
+    except requests.exceptions.ConnectionError as e:
+        warn_if(verbose_level, warning_thr, warning_msg)
+        warn_if(verbose_level, raw_err_thr, f"{e}")
+        return return_on_failure
+    return r
+
+def kegg_genes_in_dataset():
+    return {os.path.basename(path)[:-7].replace('_', ':') for path in glob.glob(pjoin(KEGG_GENES_PATH, '*'))}
+
+def sep_csv_files(lines_per_file: int, path: str):
+    """
+    Separates a large CSV file into smaller CSV files, preserving headers.
+    :param lines_per_file: int number of lines per file
+    :param path: str path to the large CSV file
+    :return: None
+    """
+    with open(path, 'r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        headers = next(reader)  # Read the headers
+        rows = list(reader)
+
+    total_lines = len(rows)
+    num_files = (total_lines + lines_per_file - 1) // lines_per_file  # Ceiling division
+
+    for i in range(num_files):
+        chunk_rows = rows[i * lines_per_file:(i + 1) * lines_per_file]
+        chunk_file_path = f"{path}_part{i + 1}.csv"
+
+        with open(chunk_file_path, 'w', newline='', encoding='utf-8') as chunk_file:
+            writer = csv.writer(chunk_file)
+            writer.writerow(headers)  # Write the header to each new file
+            writer.writerows(chunk_rows)  # Write the rows
+
+def merge_csv_parts(filename):
+    """
+    Merges CSV files that share a prefix and are named like 'prefix_part1.csv', 'prefix_part2.csv', etc.
+    Keeps the header only once.
+
+    Parameters:
+    -----------
+    filename : str
+        The path of the CSV files to merge
+    """
+    pattern = f"{filename}_part*.csv"
+    csv_files = sorted(glob.glob(pattern))  # sort ensures consistent order
+
+    if not csv_files:
+        print(f"No CSV parts found for prefix '{filename}'")
+        return
+
+    merged_df = None
+    for i, file in enumerate(csv_files):
+        df = pd.read_csv(file)
+        if merged_df is None:
+            merged_df = df
+        else:
+            merged_df = pd.concat([merged_df, df], ignore_index=True)
+
+    merged_df = merged_df.drop_duplicates()  # optional
+    merged_df.to_csv(filename, index=False)
+
+    print(f"Merged {len(csv_files)} parts into '{filename}'")
 
 def multiprocess_task(tasks, target, workers=None, callback=lambda x: x):
     """
@@ -104,8 +232,108 @@ def multiprocess_task(tasks, target, workers=None, callback=lambda x: x):
             print(f"Multiprocessing task failed: {e}")
 
 
-def kegg_genes_in_dataset():
-    return {os.path.basename(path)[:-7].replace('_', ':') for path in glob.glob(pjoin(KEGG_GENES_PATH, '*'))}
+
+
+
+
+class UniprotApi:
+    """
+    This class is responsible to connect to online DBs and retrieve information
+    """
+
+    def __init__(self, verbose_level=1):
+        self._v = verbose_level
+
+    def fetch_uniport_sequences(self, uid):
+        """
+        Retrieve all known isoforms from uniprot
+        :param uid: Uniprot id only primary name
+        :return: {uid_iso_index: sequence}
+        """
+        print_if(self._v, VERBOSE['thread_progress'], "Retrieving isoforms from Uniprot...")
+        s = create_session(DEFAULT_HEADER, RETRIES, WAIT_TIME, RETRY_STATUS_LIST)
+        url = Q_UNIP_ALL_ISOFORMS.format(uid, uid)
+        response = safe_post_request(s, url, TIMEOUT, self._v, CON_ERR_FUS.format(uid, url))
+        if not response.ok:
+            print_if(self._v, VERBOSE['thread_warnings'], CON_ERR_GENERAL.format('fetch_uniprot_sequences', uid))
+            return {}
+        if response.text == '':
+            print_if(self._v, VERBOSE['thread_warnings'], f"no sequences found for {uid}")
+            return {}
+        return process_fastas(response.text)
+
+    def expand_isoforms(self, ref_name, ref_mut=None, reviewed=True):
+        """
+        expand protein isoforms using all relevant Uniprot accession
+        this will not override the default protein isoforms
+        :param ref_name: protein name
+        :param ref_mut: Mutation obj if given will search for isoform with the given mutation
+        :return: {uid_iso_index: seq}
+        """
+        uids = self.uid_from_name(ref_name)['reviewed'] if reviewed else self.uid_from_name(ref_name)['all_enteries']
+        isoforms = {}
+
+        if isinstance(ref_mut, str):
+            match = re.match(VARIATION_REGEX, ref_mut)
+            if not match:
+                raise ValueError(f"Invalid mutation format: {ref_mut}")
+            orig_aa, loc, mut_aa = match.groups()
+            idx = int(loc) - 1
+        else:
+            idx = ref_mut.loc - 1
+            orig_aa = ref_mut.origAA
+
+
+        # Search for isoforms that have a fitting sequence to the mutation
+        for uid in uids:
+            res = self.fetch_uniport_sequences(uid)
+            if ref_mut:
+                for iso, seq in res.items():
+                    if idx >= len(seq):
+                        continue
+                    if seq[idx] == orig_aa:
+                        return {iso: seq}
+            isoforms = {**isoforms, **res}
+        return isoforms if not ref_mut else {}
+
+    def uid_from_name(self, ref_name):
+        """
+        return uniprot-id given a protein ref_name
+        :param ref_name: protein name
+        :return: {'reviewed': [...], 'non_reviewed': [...]}
+        """
+        ret = {'reviewed': [], 'non_reviewed': [], 'main_entery': [], 'all_enteries': [], 'aliases': []}
+        query = UNIP_QUERY_URL + Q_UID_PROT_ALL.format(ref_name)
+        s = create_session(DEFAULT_HEADER, RETRIES, WAIT_TIME, RETRY_STATUS_LIST)
+        r = safe_get_request(s, query, TIMEOUT, self._v, CON_ERR_UFN.format(ref_name))
+        if not r:
+            return ret
+        if r.text == '':
+            return ret
+        ret = self._process_uid_query(r.text)
+        return ret
+
+    @staticmethod
+    def _process_uid_query(data):
+        ret = {'reviewed': [], 'non_reviewed': [], 'main_entery': [], 'all_enteries': [], 'aliases': []}
+        rows = data.split('\n')[1:-1]  # first is header last is blank
+        if not rows:
+            return ret
+        main_entry = rows[0].split('\t')[UIDS_COL_IDX]  # first entry is considered main
+        ret['main_entery'].append(main_entry)
+        for row in rows:
+            values = row.split('\t')
+            entry, reviewed, gene = values[UIDS_COL_IDX], values[REVIEWED_COL_IDX], values[GENE_NAME_COL_IDX].split(" ")
+            ret['all_enteries'].append(entry)
+            ret['aliases'] += gene
+            if reviewed == UNIP_REVIEWED:
+                ret['reviewed'].append(entry)
+            else:
+                ret['non_reviewed'].append(entry)
+        return ret
+
+
+
 
 class CbioApi:
     """api for cbio portal"""
@@ -187,6 +415,52 @@ class CbioApi:
                 for id, name in zip(study_ids, study_names):
                     file.write(f"{name} \t {id}\n")
         return study_ids, study_names
+
+    def get_cancer_type(self, cancer_short_name: str) -> str:
+        """
+        :param cancer_short_name: str abbreviated cancer type
+        :return: full cancer type name
+        """
+        all_types = self.api.Cancer_Types.getAllCancerTypesUsingGET().result()
+        for cancer_type in all_types:
+            if cancer_type.shortName.lower() == cancer_short_name:
+                return cancer_type.name
+        return ''
+
+    def get_cancer_short_name(self, cancer_type: str) -> str:
+        """
+        :param cancer_type: str full cancer type name
+        :return: abbreviated cancer type name
+        """
+        all_types = self.api.Cancer_Types.getAllCancerTypesUsingGET().result()
+        for cancer_t in all_types:
+            if cancer_t.name.lower() == cancer_type.lower():
+                return cancer_t.shortName
+        return ''
+
+    @staticmethod
+    def get_patient_age(study_id, patient_id):
+        url = f"{CBIO_BASE_URL}/studies/{study_id}/patients/{patient_id}/clinical-data"
+
+        headers = {
+            "accept": "application/json"
+        }
+
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Error fetching data: {response.status_code} - {response.text}")
+
+        clinical_data = response.json()
+
+        # Try to find age-related fields
+        age_fields = ["AGE", "AGE_AT_DIAGNOSIS", "AGE_AT_SEQ_REPORT", "AGE_AT_LAST_VISIT"]
+        for entry in clinical_data:
+            if entry["clinicalAttributeId"].upper() in age_fields:
+                age = entry["value"]
+                return age
+
+        return None  # Age not found
 
 
 class KeggApi:
@@ -487,6 +761,18 @@ class KeggApi:
         assert kegg_id, 'Unable to find Kegg id'
         gene_data['kegg_id'] = kegg_id
         return {kegg_id: gene_data}
+
+    @staticmethod
+    def hugo_to_kegg_hsa(hugo):
+        url = f"https://rest.kegg.jp/find/genes/{hugo}"
+        r = requests.get(url)
+        r.raise_for_status()
+        hsa_ids = []
+        for line in r.text.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) == 2 and parts[0].startswith("hsa:"):
+                hsa_ids.append(parts[0])
+        return hsa_ids
 
 
 def gene_snvs_wrapper(gene):

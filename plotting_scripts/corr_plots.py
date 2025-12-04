@@ -32,7 +32,8 @@
 #     creates scatter plots of specified data combinations.
 #     """
 #     # Define the directory to search for CSV files and the columns of interest
-#     search_directory = '/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers'
+#     search_directory = '/cs/labs/dina/ophirmil12
+#     /PathwayAtlas/data/cbio/cancers'
 #     columns_to_plot = [
 #         'disorder_score', 'is_disordered', 'esm_log_probs',
 #         'clinvar_reg_dis_ordered_prob', 'clinvar_reg_global_prob'
@@ -124,6 +125,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from definitions import CANCERS_PATH
+
 # --- Setup: Correctly set the working directory to the project root ---
 # Note: __file__ is not defined in some interactive environments.
 # If running this cell by cell, you might need to set the path manually.
@@ -149,7 +152,7 @@ def create_colored_scatter_plot():
     Efficiently processes large CSV files to create a single, specific scatter plot.
     """
     # Define the directory to search for CSV files and the columns of interest
-    search_directory = '/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers'
+    search_directory = CANCERS_PATH
     # We only need these three columns for the final plot
     required_columns = [
         'is_disordered', 'clinvar_reg_dis_ordered_prob', 'esm_log_probs'

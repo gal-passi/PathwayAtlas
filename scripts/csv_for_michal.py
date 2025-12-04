@@ -30,7 +30,7 @@ from utils import KeggApi
 # ---------------------------------------------------------
 
 # Input Paths
-SUMMARY_CSV_PATH = "/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/results_and_graphs/results_summary.csv"
+SUMMARY_CSV_PATH = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/results_summary.csv"
 MUTATIONS_DIR = "/cs/labs/dina/ophirmil12/PathwayAtlas/results_and_graphs/scores/clinvar_reg_dis_ordered_prob-kl_divergence"
 
 # Output Path

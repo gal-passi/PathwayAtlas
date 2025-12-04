@@ -16,7 +16,7 @@ SCORING_SYSTEMS=("dw_distance")
 #SCORING_SYSTEMS=("kl_divergence" "wasserstein")
 
 # Get the total number of cancer files to set the array size
-CANCER_DATA_DIR="/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers"
+CANCER_DATA_DIR="/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/cancers"
 NUM_CANCER_FILES=$(find "$CANCER_DATA_DIR" -type f -name "*.csv" | wc -l)
 
 if [ "$NUM_CANCER_FILES" -eq 0 ]; then

@@ -77,7 +77,7 @@ except NameError:
 # # --- MAIN EXECUTION ---
 # if __name__ == "__main__":
 #     # IMPORTANT: Change this path to your folder containing the CSVs
-#     target_folder = '/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers'
+#     target_folder = '/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/cancers'
 #
 #     clean_csv_files_in_folder(target_folder)
 
@@ -101,7 +101,7 @@ except NameError:
 #     """
 #         # --- Execution ---
 #     # The specified folder path
-#     folder_path = '/cs/labs/dina/lotem.senderov/PycharmProjects/PathwayAtlas/data/cbio/cancers/'
+#     folder_path = '/cs/labs/dina/ophirmil12/PathwayAtlas/data/cbio/cancers/'
 #     """
 #
 #     uniprot_to_sequences = defaultdict(set)

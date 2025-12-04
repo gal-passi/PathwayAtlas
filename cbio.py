@@ -132,7 +132,7 @@ def merge_studies_by_cancer(cbio: CbioApi, dfs: dict, remove_duplicates: bool=Tr
             cancer_dfs[cancer_type] = merged_df
             print(f"Saved {short_cancer_name.lower() + MUTATIONS_CSV_SUFFIX}")
 
-    with open('cancer_dfs.pkl', 'wb') as f:
+    with open('data/cancer_dfs.pkl', 'wb') as f:
         pickle.dump(cancer_dfs, f)
 
     print("Merged all cancer studies.")
