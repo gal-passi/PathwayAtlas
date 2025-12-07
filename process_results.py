@@ -8,9 +8,9 @@ import openpyxl
 
 class CancerResultsAnalyzer:
 
-    def __init__(self, cbio: CbioApi, results_csv_path):
+    def __init__(self, cbio: CbioApi, cancer_scores_csv_path):
         self.cbio = cbio
-        self.cancer_name = os.path.basename(results_csv_path).replace(MUTATIONS_CSV_SUFFIX, '')
+        self.cancer_name = os.path.basename(cancer_scores_csv_path).replace(MUTATIONS_CSV_SUFFIX, '')
 
         # Load cancer mutations DataFrame
         cancer_csv_path = pjoin(CANCER_CSVS_MUTATIONS, f"{self.cancer_name}{MUTATIONS_CSV_SUFFIX}")
@@ -22,9 +22,9 @@ class CancerResultsAnalyzer:
 
         # Load cancer pathways results DataFrame
         try:
-            self.results_df = pd.read_csv(results_csv_path)
+            self.results_df = pd.read_csv(cancer_scores_csv_path)
         except FileNotFoundError:
-            print(f"Could not find cancer pathways results CSV: {results_csv_path}")
+            print(f"Could not find cancer pathways scores results CSV: {cancer_scores_csv_path}")
             self.results_df = pd.DataFrame()
 
     def get_sub_df_for_pathway(self, pathway_name: str) -> pd.DataFrame:
@@ -91,9 +91,9 @@ def summarize_results_all_cancers(cbio: CbioApi) -> None:
     Summarize the number of significant pathways for each cancer type and save to a new CSV.
     @param cbio: cBioPortal API object
     """
-    all_files = glob.glob(pjoin(CANCER_SCORES_KL_PATH, "*.csv"))
+    all_files = glob.glob(pjoin(SCORES_RESULTS_KL_D_PATH, "*.csv"))
     if not all_files:
-        print(f"No result CSV files found in the specified directory: {CANCER_SCORES_KL_PATH}")
+        print(f"No result CSV files found in the specified directory: {SCORES_RESULTS_KL_D_PATH}")
         return
 
     rows = []
@@ -107,14 +107,14 @@ def summarize_results_all_cancers(cbio: CbioApi) -> None:
     summary_df = pd.DataFrame(rows)
 
     summary_df = summary_df.sort_values(by='significant_pathways_0.01', ascending=True)
-    summary_df.to_csv(pjoin(LOTEM_RESULTS_PATH, "cancer_statistics_summary.csv"), index=False)
+    summary_df.to_csv(pjoin(RESULTS_PATH, "cancer_statistics_summary.csv"), index=False)
     print("Summary of significant pathways saved.")
 
 def add_statistics_to_excel(cbio: CbioApi, xl_file: str):
     sheets = pd.read_excel(xl_file, sheet_name=None)
-    all_files = glob.glob(pjoin(CANCER_SCORES_KL_PATH, "*.csv"))
+    all_files = glob.glob(pjoin(SCORES_RESULTS_KL_D_PATH, "*.csv"))
     if not all_files:
-        print(f"No result CSV files found in the specified directory: {CANCER_SCORES_KL_PATH}")
+        print(f"No result CSV files found in the specified directory: {SCORES_RESULTS_KL_D_PATH}")
         return
 
     updated_sheets = {}

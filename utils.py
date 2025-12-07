@@ -36,7 +36,6 @@ def print_if(verbose: object, thr: object, text: object) -> object:
     if verbose >= thr:
         print(text)
 
-
 def process_fastas(text):
     """
     process multiple fasta sequences

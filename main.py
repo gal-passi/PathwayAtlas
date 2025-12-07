@@ -1,7 +1,7 @@
 import sys
 
 from disorder_predictor import DisorderPredict
-from statistical_models import PermutationTest
+from permutation_tests import PermutatePathway
 from utils import *
 
 import os
@@ -182,20 +182,28 @@ if (__name__ == '__main__'):
     # Lab Notebook:
     # https://docs.google.com/document/d/1XR21LBpqW3q96BjExqsbH6JgEhV3Yc9sJuzG3abzUmY/edit?usp=sharing
     args = sys.argv[1:]
-    if len(args) < 2:
+    if len(args) < 3:
         print("Usage: python main.py <cancer_name_mutations.csv>")
         sys.exit(1)
 
-    cancer_file = args[0]
-    distance_metric = args[1]
+    index = int(args[0])
+    cancer_scores_path = args[1]
+    distance_metric = args[2]
 
-    cbio = CbioApi()
+    all_pathway_files = glob.glob(os.path.join(PATHWAY_SCORES_PATH, f"*.csv"))
+
+    if index >= len(all_pathway_files):
+        print(f"Index {index} is out of range. There are only {len(all_pathway_files)} pathway files.")
+        sys.exit(1)
+
+    pathways_to_permutate = all_pathway_files[index: min(index + 5, len(all_pathway_files))]
+
     # excel_path = os.path.join("results_and_graphs/pathway_analysis_combined_for_michal.xlsx")
     # add_statistics_to_excel(cbio, excel_path)
     # summarize_results_all_cancers(cbio)
-    perm_tester = PermutationTest(cancer_file)
-    print("Performing permutation test and FDR correction...")
-    perm_tester.run_permutation_test(distance_metric)
+
+    perm_test = PermutatePathway(pathways_to_permutate, cancer_scores_path, distance_metric)
+    perm_test.run_test()
 
     """
 >>>>>>> origin/master
